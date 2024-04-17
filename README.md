@@ -2,11 +2,9 @@
 
 Eine Python API für das Lehrveranstaltungs- und Prüfungsinformationssystem (LPIS) der WU Wien "[LPIS](https://www.wu.ac.at/studierende/tools-services/lpis/)". Die API verwendet `python.mechanize` für das emulieren eines Webbrowser, zum Navigieren und Absenden von (Form) Requests
 
-Diese API ist der Kern der [Flips Anwendung](https://flips.hofstaetter.io/). Siehe auch: [alexanderhofstaetter/flips](https://github.com/alexanderhofstaetter/flips)
-
 ## Dependencies
 
-Siehe auch die `import` Anweisungen in der Definition der Klasse `WuLpisApi`. 
+Siehe auch die `import` Anweisungen in der Definition der Klasse `WuLpisApi`.
 
 `pip install python-dateutil mechanize beautifulsoup4 argparse lxml`
 
@@ -32,56 +30,57 @@ api = WuLpisApi(username, password)
 api.infos()
 print json.dumps(api.getResults())
 print json.dumps(api.data)
-``` 
+```
 
 ### infos
+
 Liefert alle vorhanden Daten zu Studienplanpunkten, möglichen und durchgeführten Anmeldungen und Infos zu den untergeordneten Lehrveranstaltungen
 
-``` json
+```json
 {
-    "data": {
-        "pp": {
-            "121328": {
-                "attempts": "0", 
-                "attempts_max": "5", 
-                "depth": 3, 
-                "id": "121328", 
-                "lv_status": "PI 1567 Langer H. · Wagner D. (Anmeldung 03.09.2018 15:00)", 
-                "lv_url": "DLVO?ASPP=125001_123456;SPP=124328;F=;A=5;SH=123456;R=277879", 
-                "lvs": {
-                    "": {
-                        "capacity": "50", 
-                        "date_end": "09.10.2018 23:59", 
-                        "free": "0", 
-                        "id": "", 
-                        "name": "Soziale Kompetenz", 
-                        "prof": "Langer H. · Wagner D.", 
-                        "registerd_at": "03.09.2018 15:00", 
-                        "semester": "WS 2018", 
-                        "status": "Anmeldung", 
-                        "waitlist": "16"
-                    }, 
-                    "1568": {
-                        "capacity": "50", 
-                        "date_end": "11.09.2018 23:59", 
-                        "free": "0", 
-                        "id": "1568", 
-                        "internal_id": "405890", 
-                        "name": "Soziale Kompetenz", 
-                        "prof": "Langer H. · Müllauer-Hager B.", 
-                        "semester": "WS 2018", 
-                        "status": "Anmeldung nicht möglich", 
-                        "waitlist": "14"
-                    },
-                }
-            }
+  "data": {
+    "pp": {
+      "121328": {
+        "attempts": "0",
+        "attempts_max": "5",
+        "depth": 3,
+        "id": "121328",
+        "lv_status": "PI 1567 Langer H. · Wagner D. (Anmeldung 03.09.2018 15:00)",
+        "lv_url": "DLVO?ASPP=125001_123456;SPP=124328;F=;A=5;SH=123456;R=277879",
+        "lvs": {
+          "": {
+            "capacity": "50",
+            "date_end": "09.10.2018 23:59",
+            "free": "0",
+            "id": "",
+            "name": "Soziale Kompetenz",
+            "prof": "Langer H. · Wagner D.",
+            "registerd_at": "03.09.2018 15:00",
+            "semester": "WS 2018",
+            "status": "Anmeldung",
+            "waitlist": "16"
+          },
+          "1568": {
+            "capacity": "50",
+            "date_end": "11.09.2018 23:59",
+            "free": "0",
+            "id": "1568",
+            "internal_id": "405890",
+            "name": "Soziale Kompetenz",
+            "prof": "Langer H. · Müllauer-Hager B.",
+            "semester": "WS 2018",
+            "status": "Anmeldung nicht möglich",
+            "waitlist": "14"
+          }
         }
+      }
     }
+  }
 }
 ```
 
-
 ### registration
+
 Führt automatisch eine Anmeldung zu einer PI/LV durch. Hierbei wird genau 1 Sekunde vor Beginn der Request gestartet um optimale Chance auf einen LV Platz zu sichern.
 
 Vor dem Start der Registrierung sollte die lokale Zeit mit dem Zeitserver der WU (`timeserver.wu.ac.at`) synchronisiert werden.

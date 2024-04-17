@@ -27,4 +27,7 @@ if __name__ == '__main__':
 	method = getattr(api, args.action, None)
 	if callable(method):
 		method()
-		print(json.dumps(api.getResults(), sort_keys=True, indent=4))
+		# print(json.dumps(api.getResults(), sort_keys=True, indent=4))
+	
+	else:
+		print("This action is not available.")
