@@ -1,3 +1,4 @@
 creds.txt
 *.pyc
 *.bin
+.credentials

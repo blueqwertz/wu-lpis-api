@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 import argparse, json
 from WuLpisApiClass import WuLpisApi
 
@@ -30,4 +27,4 @@ if __name__ == '__main__':
 	method = getattr(api, args.action, None)
 	if callable(method):
 		method()
-		print json.dumps(api.getResults(), sort_keys=True, indent=4) 
+		print(json.dumps(api.getResults(), sort_keys=True, indent=4))
