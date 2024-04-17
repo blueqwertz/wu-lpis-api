@@ -10,8 +10,8 @@ def file_parser(filepath, separator="="):
 
 if __name__ == '__main__':
 	parser=argparse.ArgumentParser()
-	parser.add_argument('-a', '--action', help="Which action in the programm should run", required=True)
-	parser.add_argument('-c', '--credfile', help='Path to the credentials file with username and password')
+	parser.add_argument('-a', '--action', help="Which action in the programm should run", default="infos")
+	parser.add_argument('-c', '--credfile', help='Path to the credentials file with username and password', default=".credentials")
 	parser.add_argument('-p', '--password')
 	parser.add_argument('-u', '--username')
 	parser.add_argument('-s', '--sessiondir', help='Dir where the sessions should be stored')
