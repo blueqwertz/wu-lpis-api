@@ -206,19 +206,20 @@ class WuLpisApi():
 							if lv.select('td.capacity div[title*="Anzahl Warteliste"]'):
 								pp[key]['lvs'][number]['waitlist'] = lv.select('td.capacity div[title*="Anzahl Warteliste"]')[0].text.strip()
 		for pp_id in pp:
-			print(f"{"   " * int(pp[pp_id]["depth"])}{pp_id} {pp[pp_id]["name"]}")
+			print(f"{'   ' * int(pp[pp_id]['depth'])}{pp_id} {pp[pp_id]['name']}")
 			if "lvs" in pp[pp_id] and "" in pp[pp_id]["lvs"]:
-				print(f"\033[94m{"   " * int(pp[pp_id]['depth'] + 1)}| - {pp[pp_id]['lv_status']}\033[0m")
+				print(f"\033[94m{'   ' * int(pp[pp_id]['depth'] + 1)}| - {pp[pp_id]['lv_status']}\033[0m")
 			elif "lvs" in pp[pp_id]:
 				for lv_id in pp[pp_id]["lvs"]:
 					lv = pp[pp_id]["lvs"][lv_id]
-					print(f"{"   " * int(pp[pp_id]['depth'] + 1)}| - ", end="")
+					print(f"{'   ' * int(pp[pp_id]['depth'] + 1)}| - ", end="")
 
 					print("\033[91m" if int(lv["free"]) == 0 or lv["status"] == "Anmeldung nicht möglich" else "\033[92m", end="")
 
 					print("{:<4} - {:<9} {:<25} {:>4}/{:<4} {:<23}".format(lv["id"], lv["semester"], lv["prof"][0:25], lv["free"], lv["capacity"], lv["status"]), end="")
 
-					print(f"{f"(Anmeldung ab: {lv["date_start"]})" if "date_start" in lv else ""} {f"(Anmeldung bis: {lv["date_end"]})" if "date_end" in lv else ""}", end="")
+					print(f"(Anmeldung ab: {lv['date_start']})'" if "date_start" in lv else "", end="")
+					print(f"(Anmeldung bis: {lv['date_end']})'" if "date_end" in lv else "", end="")
 					
 					print("\033[0m")
 							
