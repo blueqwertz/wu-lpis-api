@@ -6,6 +6,7 @@ from lxml import html
 from bs4 import BeautifulSoup
 
 import mechanize, time
+import ntplib
 
 class WuLpisApi():
 
@@ -218,7 +219,7 @@ class WuLpisApi():
 
 					print("{:<3} {:<4} - {:<9} {:<25} {:>4}/{:<4} {:<25}".format(pp[pp_id]["type"], lv["id"], lv["semester"], lv["prof"][0:25], lv["free"], lv["capacity"], lv["status"]), end="")
 
-					print(f"(Anmeldung ab: {lv['date_start']})'" if "date_start" in lv else "", end="")
+					print(f"(Anmeldung ab: {lv['date_start']})" if "date_start" in lv else "", end="")
 					print(f"(Anmeldung bis: {lv['date_end']})" if "date_end" in lv else "", end="")
 					
 					print("\033[0m")
@@ -236,10 +237,16 @@ class WuLpisApi():
 		item = form.find_control(form.controls[0].name).get(None ,None, None, 0)
 		item.selected = True
 		
-		# timeserver = "timeserver.wu.ac.at"
-		# print "syncing time with \"%s\"" % timeserver
-		# os.system('sudo ntpdate -u %s' % timeserver)
-		offset = 0.5	# seconds before start time when the request should be made
+		timeserver = "timeserver.wu.ac.at"
+		print("syncing time with \"%s\"" % timeserver)
+
+		# timeserver sync
+		c = ntplib.NTPClient()
+		response = c.request('timeserver.wu.ac.at', version=3)
+		print ("time difference: %.10f (difference is taken into account)" % response.offset)
+
+		offset = 0.5 + response.offset	# seconds before start time when the request should be made
+		print("offset: %s" % offset)
 		if self.args.planobject and self.args.course:
 			pp = "S" + self.args.planobject
 			lv = self.args.course
@@ -259,63 +266,84 @@ class WuLpisApi():
 		if 'ab' in date:
 			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
 			if triggertime > time.time():
-				print("waiting: %.2f seconds (%.2f minutes)" % ((triggertime - time.time()), (triggertime - time.time()) / 60))
-				print("waiting till: %s (%s)" % (triggertime, time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(triggertime))))
-				time.sleep( triggertime - time.time() )
+				print("waiting till: %s (%ss)" % (time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(triggertime)), triggertime))
+				while time.time() < triggertime:
+					remaining_time = triggertime - time.time()
+					hours, remainder = divmod(remaining_time, 3600)
+					minutes, seconds = divmod(remainder, 60)
+					print("waiting: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")				
+				# time.sleep( triggertime - time.time() )
 
 		print("triggertime: %s" % triggertime)
 		print("final open time start: %s" % datetime.datetime.now())
 		
-		# Reload page until registration is possible
+		# Submit registration until it was successful
 		while True:
-			starttime = time.time_ns()
-			print("start request %s" % datetime.datetime.now())
-			r = self.browser.open(self.URL_scraped + url)
-			print("end request %s" % datetime.datetime.now())
-			print(f"request time {(time.time_ns() - starttime) / 1000000000}s")
-			soup = BeautifulSoup(r.read(), "html.parser")
-			if soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div.box.possible'):
-				break
+	
+		# Reload page until registration is possible
+			while True:
+				starttime = time.time_ns()
+				print("start request %s" % datetime.datetime.now())
+				r = self.browser.open(self.URL_scraped + url)
+				print("end request %s" % datetime.datetime.now())
+				print(f"request time {(time.time_ns() - starttime) / 1000000000}s")
+				soup = BeautifulSoup(r.read(), "html.parser")
+				if soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div.box.possible'):
+					# break out of loop to start registration progress
+					break
+				else:
+					print("parsing done %s" % datetime.datetime.now())
+				print("registration is not (yet) possibe, waiting ...")
+				print("reloading page and waiting for form to be submittable")
+
+			print("final open time end: %s" % datetime.datetime.now())
+			print("registration is possible")
+
+
+			cap1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
+			cap2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
+			free1 = int(cap1[:cap1.rindex('/')-1])
+			free2 = int(cap2[:cap2.rindex('/')-1])
+
+			form1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('.action form')[0]["name"].strip()
+			form2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('.action form')[0]["name"].strip()
+
+			print("end time: %s" % datetime.datetime.now())
+			print("freie plaetze: lv1: %s, lv2: %s (if defined)" % (free1, free2))
+			if free1 > 0:
+				self.browser.select_form(form1)
+				print("submitting registration form1 (%s)" % form1)
 			else:
-				print("parsing done %s" % datetime.datetime.now())
-			print("registration is not (yet) possibe, waiting ...")
-			print("reloading page and waiting for form to be submittable")
+				self.browser.select_form(form2)
+				print("submitting registration form2 (%s)" % form2)
 
-		print("final open time end: %s" % datetime.datetime.now())
-		print("registration is possible")
+			r = self.browser.submit()
 
+			soup = BeautifulSoup(r.read(), "html.parser")
+			
+			if not soup.find('div', {"class" : 'b3k_alert_success'}):
+				if soup.find('div', {"class" : 'b3k_alert_content'}):
+					print('registration failed: "%s"' % soup.find('div', {"class" : 'b3k_alert_content'}).text.strip(), end=", ")
+				print("trying again")
+				continue
 
-		cap1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
-		cap2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
-		free1 = int(cap1[:cap1.rindex('/')-1])
-		free2 = int(cap2[:cap2.rindex('/')-1])
+			if soup.find('div', {"class" : 'b3k_alert_content'}):
+				alert_text = soup.find('div', {"class" : 'b3k_alert_content'}).text.strip()
+				print(alert_text)
+				if "nicht" in alert_text:
+					print("registration failed, trying again")
+					continue
+				lv = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent
+				print("Frei: " + lv.select('div[class*="capacity_entry"]')[0].text.strip())
+				if lv.select('td.capacity div[title*="Anzahl Warteliste"]'):
+					print("Warteliste: " + lv.select('td.capacity div[title*="Anzahl Warteliste"] span')[0].text.strip() + " / " + lv.select('td.capacity div[title*="Anzahl Warteliste"] span')[0].text.strip())
+					if free1 > 0:
+						self.browser.select_form(form2)
+						print("submitting registration form (%s)" % form)
+						r = self.browser.submit()
 
-		form1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('.action form')[0]["name"].strip()
-		form2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('.action form')[0]["name"].strip()
+			if soup.find('h3'):
+				print(soup.find('h3').find('span').text.strip())
 
-		print("end time: %s" % datetime.datetime.now())
-		print("freie plaetze: lv1: %s, lv2: %s (if defined)" % (free1, free2))
-		if free1 > 0:
-			self.browser.select_form(form1)
-			print("submitting registration form1 (%s)" % form1)
-		else:
-			self.browser.select_form(form2)
-			print("submitting registration form2 (%s)" % form2)
-
-		r = self.browser.submit()
-
-		soup = BeautifulSoup(r.read(), "html.parser")
-		if soup.find('div', {"class" : 'b3k_alert_content'}):
-			print(soup.find('div', {"class" : 'b3k_alert_content'}).text.strip())
-			lv = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent
-			print("Frei: " + lv.select('div[class*="capacity_entry"]')[0].text.strip())
-			if lv.select('td.capacity div[title*="Anzahl Warteliste"]'):
-				print("Warteliste: " + lv.select('td.capacity div[title*="Anzahl Warteliste"] span')[0].text.strip() + " / " + lv.select('td.capacity div[title*="Anzahl Warteliste"] span')[0].text.strip())
-				if free1 > 0:
-					self.browser.select_form(form2)
-					print("submitting registration form (%s)" % form)
-					r = self.browser.submit()
-
-		if soup.find('h3'):
-			print(soup.find('h3').find('span').text.strip())
+			break
 
