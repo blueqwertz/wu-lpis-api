@@ -206,23 +206,39 @@ class WuLpisApi():
 
 							if lv.select('td.capacity div[title*="Anzahl Warteliste"]'):
 								pp[key]['lvs'][number]['waitlist'] = lv.select('td.capacity div[title*="Anzahl Warteliste"]')[0].text.strip()
+
+		lv_index = 0
+
+		lv_register = []
+
 		for pp_id in pp:
 			print(f"{'   ' * int(pp[pp_id]['depth'])}{pp_id} {pp[pp_id]['name']}")
 			if "lvs" in pp[pp_id] and "" in pp[pp_id]["lvs"]:
 				print(f"\033[94m{'   ' * int(pp[pp_id]['depth'] + 1)}{pp[pp_id]['lv_status']}\033[0m")
 			elif "lvs" in pp[pp_id]:
 				for lv_id in pp[pp_id]["lvs"]:
+					lv_index += 1
 					lv = pp[pp_id]["lvs"][lv_id]
+					lv_register.append({"lv": lv_id, "pp": pp_id, "name": pp[pp_id]["name"]})
 					print(f"{'   ' * int(pp[pp_id]['depth'] + 1)}", end="")
 
 					print("\033[91m" if int(lv["free"]) == 0 or lv["status"] == "Anmeldung nicht möglich" else "\033[92m", end="")
 
-					print("{:<3} {:<4} - {:<9} {:<25} {:>4}/{:<4} {:<25}".format(pp[pp_id]["type"], lv["id"], lv["semester"], lv["prof"][0:25], lv["free"], lv["capacity"], lv["status"]), end="")
+					print("[{:03d}] {:<3} {:<4} - {:<9} {:<25} {:>4}/{:<4} {:<25}".format(lv_index, pp[pp_id]["type"], lv["id"], lv["semester"], lv["prof"][0:25], lv["free"], lv["capacity"], lv["status"]), end="")
 
 					print(f"(Anmeldung ab: {lv['date_start']})" if "date_start" in lv else "", end="")
 					print(f"(Anmeldung bis: {lv['date_end']})" if "date_end" in lv else "", end="")
 					
 					print("\033[0m")
+
+		if input("register for a course [y/N]: ").lower() == "y":
+			register_id = int(input("enter course index: "))
+			if input("do you want to register for %s (LV: %s) [y/N]: " % (lv_register[register_id - 1]["name"],lv_register[register_id - 1]["lv"])).lower() == "y":
+				print(lv_register[register_id - 1])
+				self.args.planobject = lv_register[register_id - 1]["pp"]
+				self.args.course = lv_register[register_id - 1]["lv"]
+
+				self.registration()
 							
 		self.data['pp'] = pp				
 		return self.data

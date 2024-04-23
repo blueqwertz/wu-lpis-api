@@ -2,3 +2,4 @@ creds.txt
 *.pyc
 *.bin
 .credentials*
+.DS_STORE

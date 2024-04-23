@@ -28,6 +28,5 @@ if __name__ == '__main__':
 	if callable(method):
 		method()
 		# print(json.dumps(api.getResults(), sort_keys=True, indent=4))
-	
 	else:
 		print("This action is not available.")
