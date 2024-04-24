@@ -354,9 +354,12 @@ class WuLpisApi():
 				if lv.select('td.capacity div[title*="Anzahl Warteliste"]'):
 					print("Warteliste: " + lv.select('td.capacity div[title*="Anzahl Warteliste"] span')[0].text.strip() + " / " + lv.select('td.capacity div[title*="Anzahl Warteliste"] span')[0].text.strip())
 					if free1 > 0:
-						self.browser.select_form(form2)
-						print("submitting registration form (%s)" % form)
-						r = self.browser.submit()
+						try:
+							self.browser.select_form(form2)
+							print("submitting registration form (%s)" % form)
+							r = self.browser.submit()
+						except:
+							print("could not submit form2 %s" % form2)
 
 			if soup.find('h3'):
 				print(soup.find('h3').find('span').text.strip())
