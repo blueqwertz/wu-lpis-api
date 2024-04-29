@@ -253,15 +253,15 @@ class WuLpisApi():
 		item = form.find_control(form.controls[0].name).get(None ,None, None, 0)
 		item.selected = True
 		
-		timeserver = "timeserver.wu.ac.at"
-		print("syncing time with \"%s\"" % timeserver)
+		# timeserver = "timeserver.wu.ac.at"
+		# print("syncing time with \"%s\"" % timeserver)
 
-		# timeserver sync
-		c = ntplib.NTPClient()
-		response = c.request('timeserver.wu.ac.at', version=3)
-		print ("time difference: %.10f (difference is taken into account)" % response.offset)
+		# # timeserver sync
+		# c = ntplib.NTPClient()
+		# response = c.request('timeserver.wu.ac.at', version=3)
+		# print ("time difference: %.10f (difference is taken into account)" % response.offset)
 
-		offset = 0.5 + response.offset	# seconds before start time when the request should be made
+		offset = 0.5	# seconds before start time when the request should be made
 		print("offset: %s" % offset)
 		if self.args.planobject and self.args.course:
 			pp = "S" + self.args.planobject
@@ -346,7 +346,7 @@ class WuLpisApi():
 			if soup.find('div', {"class" : 'b3k_alert_content'}):
 				alert_text = soup.find('div', {"class" : 'b3k_alert_content'}).text.strip()
 				print(alert_text)
-				if "nicht" in alert_text:
+				if "nicht" in alert_text and not "Warteliste" in alert_text:
 					print("registration failed, trying again")
 					continue
 				lv = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent
