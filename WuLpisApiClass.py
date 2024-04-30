@@ -267,7 +267,7 @@ class WuLpisApi():
 		if self.args.planobject and self.args.course:
 			pp = "S" + self.args.planobject
 			lv = self.args.course
-			lv2 = self.args.course2
+			lv2 = self.args.course2 or lv
 		
 		self.data = {}
 		self.browser.select_form('ea_stupl')
@@ -317,6 +317,7 @@ class WuLpisApi():
 			print("final open time end: %s" % datetime.datetime.now())
 			print("registration is possible")
 
+			print(lv, lv2)
 
 			cap1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
 			cap2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
@@ -329,39 +330,52 @@ class WuLpisApi():
 			print("end time: %s" % datetime.datetime.now())
 			print("freie plaetze: lv1: %s, lv2: %s (if defined)" % (free1, free2))
 			if free1 > 0:
-				self.browser.select_form(form1)
-				print("submitting registration form1 (%s)" % form1)
-			else:
-				self.browser.select_form(form2)
-				print("submitting registration form2 (%s)" % form2)
+				if not form1.startswith("WLDEL"):
+					self.browser.select_form(form1)
+					print("submitting registration form1 (%s)" % form1)
+				else:
+					print("skipping form1")
+			elif lv2:
+				if not form2.startswith("WLDEL"):
+					self.browser.select_form(form2)
+					print("submitting registration form2 (%s)" % form2)
+				else:
+					print("skipping form2")
 
 			r = self.browser.submit()
 
 			soup = BeautifulSoup(r.read(), "html.parser")
+
+			alert_sucess = soup.find('div', {"class" : 'b3k_alert_sucess'})
+			alert_content = soup.find('div', {"class" : 'b3k_alert_content'})
 			
-			if not soup.find('div', {"class" : 'b3k_alert_success'}):
-				if soup.find('div', {"class" : 'b3k_alert_content'}):
-					print('registration failed: "%s"' % soup.find('div', {"class" : 'b3k_alert_content'}).text.strip(), end=", ")
-				print("trying again")
+			# Check if registration failed, try again if "Warteliste" is not in alert_content
+			if (not alert_sucess) and (alert_content and "Warteliste" not in alert_content.text.strip()):
+				print('\033[91m%s\033[0m' % alert_content.text.strip(), end=", ")
 				continue
 
-			if soup.find('div', {"class" : 'b3k_alert_content'}):
-				alert_text = soup.find('div', {"class" : 'b3k_alert_content'}).text.strip()
+			if alert_content and "nicht" in alert_content.text.strip() and "Warteliste" not in alert_content.text.strip():
+				print('\033[91m%s\033[0m' % alert_content.text.strip(), end=", ")
+				continue
+			
+			if alert_content:
+				alert_text = alert_content.text.strip()
 				print(alert_text)
-				if "nicht" in alert_text and not "Warteliste" in alert_text:
-					print("registration failed, trying again")
-					continue
 				lv = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent
 				print("Frei: " + lv.select('div[class*="capacity_entry"]')[0].text.strip())
-				if lv.select('td.capacity div[title*="Anzahl Warteliste"]'):
-					print("Warteliste: " + lv.select('td.capacity div[title*="Anzahl Warteliste"] span')[0].text.strip() + " / " + lv.select('td.capacity div[title*="Anzahl Warteliste"] span')[0].text.strip())
+				wl_title = "Anzahl Warteliste" if not "Warteliste" in alert_text else "aktuelle Wartelistenposition / Anzahl Wartelisteneinträge"
+				if lv.select('td.capacity div[title*="%s"]' % wl_title):
+					print("Warteliste: " + lv.select('td.capacity div[title*="%s"] span' % wl_title)[0].text.strip() + " / " + lv.select('td.capacity div[title*="%s"] span' % wl_title)[0].text.strip())
 					if free1 > 0:
 						try:
-							self.browser.select_form(form2)
-							print("submitting registration form (%s)" % form)
-							r = self.browser.submit()
+							if not form2.startswith("WLDEL"):
+								self.browser.select_form(form2)
+								print("submitting registration form2 (%s)" % form)
+								r = self.browser.submit()
+							else:
+								print("skipping form2")
 						except:
-							print("could not submit form2 %s" % form2)
+							print("could not submit form (%s)" % form2)
 
 			if soup.find('h3'):
 				print(soup.find('h3').find('span').text.strip())
