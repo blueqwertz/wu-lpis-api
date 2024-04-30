@@ -223,8 +223,10 @@ class WuLpisApi():
 					print(f"{'   ' * int(pp[pp_id]['depth'] + 1)}", end="")
 
 					print("\033[91m" if int(lv["free"]) == 0 or lv["status"] == "Anmeldung nicht möglich" else "\033[92m", end="")
+					if "date_start" in lv:
+						print("\033[93m", end="")
 
-					print("[{:03d}] {:<3} {:<4} - {:<9} {:<25} {:>4}/{:<4} {:<25}".format(lv_index, pp[pp_id]["type"], lv["id"], lv["semester"], lv["prof"][0:25], lv["free"], lv["capacity"], lv["status"]), end="")
+					print("[{:03d}] {:<3} {:<4} - {:<9} {:<25} {:>4}/{:<4} {:<27}".format(lv_index, pp[pp_id]["type"], lv["id"], lv["semester"], lv["prof"][0:25], lv["free"], lv["capacity"], lv["status"]), end="")
 
 					print(f"(Anmeldung ab: {lv['date_start']})" if "date_start" in lv else "", end="")
 					print(f"(Anmeldung bis: {lv['date_end']})" if "date_end" in lv else "", end="")
@@ -234,7 +236,6 @@ class WuLpisApi():
 		if input("register for a course [y/N]: ").lower() == "y":
 			register_id = int(input("enter course index: "))
 			if input("do you want to register for %s (LV: %s) [y/N]: " % (lv_register[register_id - 1]["name"],lv_register[register_id - 1]["lv"])).lower() == "y":
-				print(lv_register[register_id - 1])
 				self.args.planobject = lv_register[register_id - 1]["pp"]
 				self.args.course = lv_register[register_id - 1]["lv"]
 
@@ -281,6 +282,7 @@ class WuLpisApi():
 		date = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('.action .timestamp span')[0].text.strip()
 		if 'ab' in date:
 			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
+
 			if triggertime > time.time():
 				print("waiting till: %s (%ss)" % (time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(triggertime)), triggertime))
 				while time.time() < triggertime:
