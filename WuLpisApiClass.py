@@ -262,7 +262,7 @@ class WuLpisApi():
 		# response = c.request('timeserver.wu.ac.at', version=3)
 		# print ("time difference: %.10f (difference is taken into account)" % response.offset)
 
-		offset = 0.5	# seconds before start time when the request should be made
+		offset = 1	# seconds before start time when the request should be made
 		print("offset: %s" % offset)
 		if self.args.planobject and self.args.course:
 			pp = "S" + self.args.planobject
@@ -274,7 +274,7 @@ class WuLpisApi():
 		r = self.browser.submit()
 		soup = BeautifulSoup(r.read(), "html.parser")
 
-		url = soup.find('table', {"class" : "b3k-data"}).find('a', id=pp).parent.find('a', href=True)["href"]
+		url = soup.find('table', {"class" : "b3k-data"}).find('a', id=pp).parent.findAll('a', href=True)[-1]["href"]
 		r = self.browser.open(self.URL_scraped + url)
 
 		triggertime = 0
