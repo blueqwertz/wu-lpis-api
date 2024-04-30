@@ -348,12 +348,12 @@ class WuLpisApi():
 			alert_content = soup.find('div', {"class" : 'b3k_alert_content'})
 			
 			# Check if registration failed, try again if "Warteliste" is not in alert_content
-			if (not alert_sucess) and (alert_content and "Warteliste" not in alert_content.text.strip()):
-				print('\033[91m%s\033[0m' % alert_content.text.strip(), end=", ")
+			if (not alert_sucess) and (alert_content and "nicht" in alert_content.text.strip() and "Warteliste" not in alert_content.text.strip()):
+				print('\033[91m%s\033[0m' % alert_content.text.strip())
 				continue
 
 			if alert_content and "nicht" in alert_content.text.strip() and "Warteliste" not in alert_content.text.strip():
-				print('\033[91m%s\033[0m' % alert_content.text.strip(), end=", ")
+				print('\033[91m%s\033[0m' % alert_content.text.strip())
 				continue
 			
 			if alert_content:
