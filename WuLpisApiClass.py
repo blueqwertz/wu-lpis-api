@@ -317,8 +317,6 @@ class WuLpisApi():
 			print("final open time end: %s" % datetime.datetime.now())
 			print("registration is possible")
 
-			print(lv, lv2)
-
 			cap1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
 			cap2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
 			free1 = int(cap1[:cap1.rindex('/')-1])
@@ -334,13 +332,13 @@ class WuLpisApi():
 					self.browser.select_form(form1)
 					print("submitting registration form1 (%s)" % form1)
 				else:
-					print("skipping form1")
+					print("skipping form1 (%s)" % form1)
 			elif lv2:
 				if not form2.startswith("WLDEL"):
 					self.browser.select_form(form2)
 					print("submitting registration form2 (%s)" % form2)
 				else:
-					print("skipping form2")
+					print("skipping form2 (%s)" % form2)
 
 			r = self.browser.submit()
 
@@ -373,7 +371,7 @@ class WuLpisApi():
 								print("submitting registration form2 (%s)" % form)
 								r = self.browser.submit()
 							else:
-								print("skipping form2")
+								print("skipping form2 (%s)" % form2)
 						except:
 							print("could not submit form (%s)" % form2)
 
