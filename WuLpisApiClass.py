@@ -262,7 +262,7 @@ class WuLpisApi():
 		# response = c.request('timeserver.wu.ac.at', version=3)
 		# print ("time difference: %.10f (difference is taken into account)" % response.offset)
 
-		offset = 1	# seconds before start time when the request should be made
+		offset = 0.8	# seconds before start time when the request should be made
 		print("offset: %s" % offset)
 		if self.args.planobject and self.args.course:
 			pp = "S" + self.args.planobject
@@ -274,7 +274,7 @@ class WuLpisApi():
 		r = self.browser.submit()
 		soup = BeautifulSoup(r.read(), "html.parser")
 
-		url = soup.find('table', {"class" : "b3k-data"}).find('a', id=pp).parent.findAll('a', href=True)[-1]["href"]
+		url = soup.find('table', {"class" : "b3k-data"}).find('a', id=pp).parent.find('a', href=True)["href"]
 		r = self.browser.open(self.URL_scraped + url)
 
 		triggertime = 0
@@ -284,12 +284,12 @@ class WuLpisApi():
 			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
 
 			if triggertime > time.time():
-				print("waiting till: %s (%ss)" % (time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(triggertime)), triggertime))
+				print("waiting until: %s (%ss)" % (time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(triggertime)), triggertime))
 				while time.time() < triggertime:
 					remaining_time = triggertime - time.time()
 					hours, remainder = divmod(remaining_time, 3600)
 					minutes, seconds = divmod(remainder, 60)
-					print("waiting: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")				
+					print("starting in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")				
 				# time.sleep( triggertime - time.time() )
 
 		print("triggertime: %s" % triggertime)
@@ -298,7 +298,7 @@ class WuLpisApi():
 		# Submit registration until it was successful
 		while True:
 	
-		# Reload page until registration is possible
+			# Reload page until registration is possible
 			while True:
 				starttime = time.time_ns()
 				print("start request %s" % datetime.datetime.now())
@@ -344,14 +344,9 @@ class WuLpisApi():
 
 			soup = BeautifulSoup(r.read(), "html.parser")
 
-			alert_sucess = soup.find('div', {"class" : 'b3k_alert_sucess'})
 			alert_content = soup.find('div', {"class" : 'b3k_alert_content'})
 			
-			# Check if registration failed, try again if "Warteliste" is not in alert_content
-			if (not alert_sucess) and (alert_content and "nicht" in alert_content.text.strip() and "Warteliste" not in alert_content.text.strip()):
-				print('\033[91m%s\033[0m' % alert_content.text.strip())
-				continue
-
+			# Check if alert_content is available + check if registration failed
 			if alert_content and "nicht" in alert_content.text.strip() and "Warteliste" not in alert_content.text.strip():
 				print('\033[91m%s\033[0m' % alert_content.text.strip())
 				continue
