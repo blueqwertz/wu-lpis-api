@@ -41,11 +41,12 @@ class WuLpisApi():
 		self.login()
 
 	def login(self):
-		# print "init time: %s" % datetime.datetime.now()
+		starttime = time.time_ns()
+		print ("init time: %s" % starttime)
 		self.data = {}
 
 		#if not self.load_session():
-		print("logging in ...")
+		print("logging in %s..." % self.username)
 
 		r = self.browser.open(self.URL)
 		self.browser.select_form('login')
@@ -67,6 +68,7 @@ class WuLpisApi():
 		self.data = self.URL_scraped
 		#self.save_session()
 
+		print(f"request time {(time.time_ns() - starttime) / 1000000000}s")
 
 		return self.data
 
@@ -91,7 +93,7 @@ class WuLpisApi():
 					raise
 		with open(self.sessionfile, 'wb') as file:
 			try:
-				# dill.dump(self.browser, file)	
+				# dill.dump(self.browser, file)
 				pickle.dump(self.browser, file, pickle.HIGHEST_PROTOCOL)
 			except:
 				return False
@@ -285,11 +287,11 @@ class WuLpisApi():
 
 			if triggertime > time.time():
 				print("waiting until: %s (%ss)" % (time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(triggertime)), triggertime))
-				while time.time() < triggertime:
-					remaining_time = triggertime - time.time()
-					hours, remainder = divmod(remaining_time, 3600)
-					minutes, seconds = divmod(remainder, 60)
-					print("starting in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")				
+				# while time.time() < triggertime:
+				# 	remaining_time = triggertime - time.time()
+				# 	hours, remainder = divmod(remaining_time, 3600)
+				# 	minutes, seconds = divmod(remainder, 60)
+				# 	print("starting in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")				
 				# time.sleep( triggertime - time.time() )
 
 		print("triggertime: %s" % triggertime)
