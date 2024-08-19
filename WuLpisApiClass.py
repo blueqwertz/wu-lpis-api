@@ -130,23 +130,31 @@ class WuLpisApi():
 
 		soup = BeautifulSoup(r.read(), "html.parser")
 
-		# studies = {}
-		# for i, entry in enumerate(soup.find('select', {'name': form.controls[0].name}).find_all('option')):
-		# 	# print(i, len(entry.text.split("/")), (i-1) % max(len(studies), 1), len(studies), entry.text.split("/"))
-		# 	print(entry)
-		# 	# if len(entry.text.split('/')) == 1:
-		# 	# 	studies[i] = {}
-		# 	# 	studies[i]['id'] = entry['value']
-		# 	# 	studies[i]['title'] = entry['title']
-		# 	# 	studies[i]['name'] = entry.text
-		# 	# 	studies[i]['abschnitte'] = {}
-		# 	# elif len(entry.text.split('/')) == 2 and entry.text.split('/')[0] == studies[(i-1) % len(studies)]['name']:
-		# 	# 	studies[(i-1) % len(studies)]['abschnitte'][entry['value']] = {}
-		# 	# 	studies[(i-1) % len(studies)]['abschnitte'][entry['value']]['id'] = entry['value']
-		# 	# 	studies[(i-1) % len(studies)]['abschnitte'][entry['value']]['title'] = entry['title']
-		# 	# 	studies[(i-1) % len(studies)]['abschnitte'][entry['value']]['name'] = entry.text
+		studies = {}
+		index = 0
+		for i, entry in enumerate(soup.find('select', {'name': form.controls[0].name}).find_all('option')):
 
-		# # self.data['studies'] = studies
+			if len(entry.text.split('/')) == 1:
+				studies[index] = {}
+				studies[index]['id'] = entry['value']
+				studies[index]['title'] = entry['title']
+				studies[index]['name'] = entry.text
+				index += 1
+
+			# if len(entry.text.split('/')) == 1:
+			# 	studies[i] = {}
+			# 	studies[i]['id'] = entry['value']
+			# 	studies[i]['title'] = entry['title']
+			# 	studies[i]['name'] = entry.text
+			# 	studies[i]['abschnitte'] = {}
+			# elif len(entry.text.split('/')) == 2 and entry.text.split('/')[0] == studies[(i-1) % len(studies)]['name']:
+			# # elif len(entry.text.split('/')) == 2 and entry.text.split('/')[0] == studies[(i-1) % len(studies)]['name']:
+			# 	studies[(i-1) % len(studies)]['abschnitte'][entry['value']] = {}
+			# 	studies[(i-1) % len(studies)]['abschnitte'][entry['value']]['id'] = entry['value']
+			# 	studies[(i-1) % len(studies)]['abschnitte'][entry['value']]['title'] = entry['title']
+			# 	studies[(i-1) % len(studies)]['abschnitte'][entry['value']]['name'] = entry.text
+
+		self.data['studies'] = studies
 
 		pp = {}
 		for i, planpunkt in enumerate(soup.find('table', {"class" : "b3k-data"}).find('tbody').find_all('tr')):
@@ -228,20 +236,22 @@ class WuLpisApi():
 					if "date_start" in lv:
 						print("\033[93m", end="")
 
-					print("[{:03d}] {:<3} {:<4} - {:<9} {:<25} {:>4}/{:<4} {:<27}".format(lv_index, pp[pp_id]["type"], lv["id"], lv["semester"], lv["prof"][0:25], lv["free"], lv["capacity"], lv["status"]), end="")
+					# print("[{:03d}] {:<3} {:<4} - {:<9} {:<25} {:>4}/{:<4} {:<27}".format(lv_index, pp[pp_id]["type"], lv["id"], lv["semester"], lv["prof"][0:25], lv["free"], lv["capacity"], lv["status"]), end="") # with index
+					print("{:<3} {:<4} - {:<9} {:<25} {:>4}/{:<4} {:<27}".format(pp[pp_id]["type"], lv["id"], lv["semester"], lv["prof"][0:25], lv["free"], lv["capacity"], lv["status"]), end="")
+
 
 					print(f"(Anmeldung ab: {lv['date_start']})" if "date_start" in lv else "", end="")
 					print(f"(Anmeldung bis: {lv['date_end']})" if "date_end" in lv else "", end="")
 					
 					print("\033[0m")
 
-		if input("register for a course [y/N]: ").lower() == "y":
-			register_id = int(input("enter course index: "))
-			if input("do you want to register for %s (LV: %s) [y/N]: " % (lv_register[register_id - 1]["name"],lv_register[register_id - 1]["lv"])).lower() == "y":
-				self.args.planobject = lv_register[register_id - 1]["pp"]
-				self.args.course = lv_register[register_id - 1]["lv"]
+		# if input("register for a course [y/N]: ").lower() == "y":
+		# 	register_id = int(input("enter course index: "))
+		# 	if input("do you want to register for %s (LV: %s) [y/N]: " % (lv_register[register_id - 1]["name"],lv_register[register_id - 1]["lv"])).lower() == "y":
+		# 		self.args.planobject = lv_register[register_id - 1]["pp"]
+		# 		self.args.course = lv_register[register_id - 1]["lv"]
 
-				self.registration()
+		# 		self.registration()
 							
 		self.data['pp'] = pp				
 		return self.data
@@ -276,7 +286,7 @@ class WuLpisApi():
 		r = self.browser.submit()
 		soup = BeautifulSoup(r.read(), "html.parser")
 
-		url = soup.find('table', {"class" : "b3k-data"}).find('a', id=pp).parent.find('a', href=True)["href"]
+		url = soup.find('table', {"class" : "b3k-data"}).find('a', id=pp).parent.findAll('a', href=True)[-1]["href"]
 		r = self.browser.open(self.URL_scraped + url)
 
 		triggertime = 0
@@ -287,11 +297,11 @@ class WuLpisApi():
 
 			if triggertime > time.time():
 				print("waiting until: %s (%ss)" % (time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(triggertime)), triggertime))
-				# while time.time() < triggertime:
-				# 	remaining_time = triggertime - time.time()
-				# 	hours, remainder = divmod(remaining_time, 3600)
-				# 	minutes, seconds = divmod(remainder, 60)
-				# 	print("starting in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")				
+				while time.time() < triggertime:
+					remaining_time = triggertime - time.time()
+					hours, remainder = divmod(remaining_time, 3600)
+					minutes, seconds = divmod(remainder, 60)
+					print("starting in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")				
 				# time.sleep( triggertime - time.time() )
 
 		print("triggertime: %s" % triggertime)
@@ -303,21 +313,21 @@ class WuLpisApi():
 			# Reload page until registration is possible
 			while True:
 				starttime = time.time_ns()
-				print("start request %s" % datetime.datetime.now())
+				print("\033[92mstart request %s\033[0m" % datetime.datetime.now())
 				r = self.browser.open(self.URL_scraped + url)
-				print("end request %s" % datetime.datetime.now())
+				print("\033[92mend request %s\033[0m" % datetime.datetime.now())
 				print(f"request time {(time.time_ns() - starttime) / 1000000000}s")
 				soup = BeautifulSoup(r.read(), "html.parser")
 				if soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div.box.possible'):
 					# break out of loop to start registration progress
 					break
 				else:
-					print("parsing done %s" % datetime.datetime.now())
-				print("registration is not (yet) possibe, waiting ...")
-				print("reloading page and waiting for form to be submittable")
+					print("\033[92mparsing done %s\033[0m" % datetime.datetime.now())
+				print("\033[93mregistration is not (yet) possibe, waiting ...\033[0m")
+				print("\033[93mreloading page and waiting for form to be submittable\033[0m")
 
 			print("final open time end: %s" % datetime.datetime.now())
-			print("registration is possible")
+			print("\033[92mregistration is possible\033[0m")
 
 			cap1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
 			cap2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
@@ -328,7 +338,7 @@ class WuLpisApi():
 			form2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('.action form')[0]["name"].strip()
 
 			print("end time: %s" % datetime.datetime.now())
-			print("freie plaetze: lv1: %s, lv2: %s (if defined)" % (free1, free2))
+			print("\033[92mfreie plaetze: lv1: %s, lv2: %s (if defined)\033[0m" % (free1, free2))
 			if free1 > 0:
 				if not form1.startswith("WLDEL"):
 					self.browser.select_form(form1)
@@ -355,7 +365,7 @@ class WuLpisApi():
 			
 			if alert_content:
 				alert_text = alert_content.text.strip()
-				print(alert_text)
+				print("\033[1m" + alert_text + "\033[0m")
 				lv = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent
 				print("Frei: " + lv.select('div[class*="capacity_entry"]')[0].text.strip())
 				wl_title = "Anzahl Warteliste" if not "Warteliste" in alert_text else "aktuelle Wartelistenposition / Anzahl Wartelisteneinträge"
