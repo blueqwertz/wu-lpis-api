@@ -295,6 +295,17 @@ class WuLpisApi():
 		if 'ab' in date:
 			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
 
+			if (time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - time.time()) > 600:
+				print("\033[93mregistration starts in more than 10 minutes\033[0m")
+				print("waiting until 5 minutes before the registration starts")
+				login_triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - 300
+				while time.time() < login_triggertime:
+					remaining_time = login_triggertime - time.time()
+					hours, remainder = divmod(remaining_time, 3600)
+					minutes, seconds = divmod(remainder, 60)
+					print("logging in again in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")
+				self.login()
+
 			if triggertime > time.time():
 				print("waiting until: %s (%ss)" % (time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(triggertime)), triggertime))
 				while time.time() < triggertime:
