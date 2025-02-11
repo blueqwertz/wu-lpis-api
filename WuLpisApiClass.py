@@ -119,9 +119,11 @@ class WuLpisApi():
 		self.browser.select_form('ea_stupl')
 		
 		form = self.browser.form
+
 		# Select first element in Select Options Dropdown
-		item = form.find_control(form.controls[0].name).get(None ,None, None, 0)
+		item = form.find_control(form.controls[0].name).get(self.args.sectionpoint) if self.args.sectionpoint else form.find_control(form.controls[0].name).get(None ,None, None, 0)
 		item.selected = True
+		
 
 		r = self.browser.submit()
 		
@@ -263,6 +265,7 @@ class WuLpisApi():
 		
 		form = self.browser.form
 		# Select first element in Select Options Dropdown
+		print(form.controls[0].name)
 		item = form.find_control(form.controls[0].name).get(None ,None, None, 0)
 		item.selected = True
 		
@@ -285,12 +288,12 @@ class WuLpisApi():
 		self.browser.select_form('ea_stupl')
 		r = self.browser.submit()
 		soup = BeautifulSoup(r.read(), "html.parser")
-
-		url = soup.find('table', {"class" : "b3k-data"}).find('a', id=pp).parent.findAll('a', href=True)[-1]["href"]
+		url = soup.find('table', {"class" : "b3k-data"}).find('a', id=pp).parent.findAll('a', href=True, title="Lehrveranstaltungsanmeldung")[0]["href"]
 		r = self.browser.open(self.URL_scraped + url)
 
 		triggertime = 0
 		soup = BeautifulSoup(r.read(), "html.parser")
+
 		date = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('.action .timestamp span')[0].text.strip()
 		if 'ab' in date:
 			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
