@@ -266,7 +266,7 @@ class WuLpisApi():
 		form = self.browser.form
 		# Select first element in Select Options Dropdown
 		print(form.controls[0].name)
-		item = form.find_control(form.controls[0].name).get(None ,None, None, 0)
+		item = form.find_control(form.controls[0].name).get(self.args.sectionpoint) if self.args.sectionpoint else form.find_control(form.controls[0].name).get(None ,None, None, 0)
 		item.selected = True
 		
 		# timeserver = "timeserver.wu.ac.at"
