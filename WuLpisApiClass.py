@@ -122,6 +122,7 @@ class WuLpisApi():
 
 		# Select first element in Select Options Dropdown
 		item = form.find_control(form.controls[0].name).get(self.args.sectionpoint) if self.args.sectionpoint else form.find_control(form.controls[0].name).get(None ,None, None, 0)
+		print("sectionpoint: %s" % item.name)
 		item.selected = True
 		
 
@@ -246,14 +247,6 @@ class WuLpisApi():
 					print(f"(Anmeldung bis: {lv['date_end']})" if "date_end" in lv else "", end="")
 					
 					print("\033[0m")
-
-		# if input("register for a course [y/N]: ").lower() == "y":
-		# 	register_id = int(input("enter course index: "))
-		# 	if input("do you want to register for %s (LV: %s) [y/N]: " % (lv_register[register_id - 1]["name"],lv_register[register_id - 1]["lv"])).lower() == "y":
-		# 		self.args.planobject = lv_register[register_id - 1]["pp"]
-		# 		self.args.course = lv_register[register_id - 1]["lv"]
-
-		# 		self.registration()
 							
 		self.data['pp'] = pp				
 		return self.data
@@ -265,8 +258,8 @@ class WuLpisApi():
 		
 		form = self.browser.form
 		# Select first element in Select Options Dropdown
-		print(form.controls[0].name)
 		item = form.find_control(form.controls[0].name).get(self.args.sectionpoint) if self.args.sectionpoint else form.find_control(form.controls[0].name).get(None ,None, None, 0)
+		print("sectionpoint: %s" % item.name)
 		item.selected = True
 		
 		# timeserver = "timeserver.wu.ac.at"
