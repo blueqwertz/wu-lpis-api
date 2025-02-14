@@ -301,6 +301,8 @@ class WuLpisApi():
 					minutes, seconds = divmod(remainder, 60)
 					print("logging in again in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")
 				self.login()
+				self.registration()
+				return
 
 			if triggertime > time.time():
 				print("waiting until: %s (%ss)" % (time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(triggertime)), triggertime))
