@@ -266,9 +266,9 @@ class WuLpisApi():
 		# print("syncing time with \"%s\"" % timeserver)
 
 		# # timeserver sync
-		# c = ntplib.NTPClient()
-		# response = c.request('timeserver.wu.ac.at', version=3)
-		# print ("time difference: %.10f (difference is taken into account)" % response.offset)
+		c = ntplib.NTPClient()
+		response = c.request('timeserver.wu.ac.at', version=3)
+		print ("time difference: %.10f (difference is taken into account)" % response.offset)
 
 		offset = 0.8	# seconds before start time when the request should be made
 		print("offset: %s" % offset)
