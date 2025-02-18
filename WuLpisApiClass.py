@@ -262,12 +262,12 @@ class WuLpisApi():
 		print("sectionpoint: %s" % item.name)
 		item.selected = True
 		
-		# timeserver = "timeserver.wu.ac.at"
-		# print("syncing time with \"%s\"" % timeserver)
+		timeserver = "timeserver.wu.ac.at"
+		print("syncing time with \"%s\"" % timeserver)
 
 		# # timeserver sync
 		c = ntplib.NTPClient()
-		response = c.request('timeserver.wu.ac.at', version=3)
+		response = c.request(timeserver, version=3)
 		print ("time difference: %.10f (difference is taken into account)" % response.offset)
 
 		offset = 0.8	# seconds before start time when the request should be made
