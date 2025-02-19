@@ -1,5 +1,7 @@
-import argparse, json
+import argparse
+import traceback
 from WuLpisApiClass import WuLpisApi
+from logger import logger
 
 def file_parser(filepath, separator="="):
 	data = {}
@@ -9,8 +11,6 @@ def file_parser(filepath, separator="="):
 	return data
 
 if __name__ == '__main__':
-	
-
 	parser=argparse.ArgumentParser()
 	parser.add_argument('-a', '--action', help="Which action in the programm should run", default="infos")
 	parser.add_argument('-c', '--credfile', help='Path to the credentials file with username and password', default=".credentials")
@@ -28,11 +28,14 @@ if __name__ == '__main__':
 	
 	if args.credfile and "sectionpoint" in file_parser(args.credfile):
 		args.sectionpoint = file_parser(args.credfile)["sectionpoint"]
-	
-	api = WuLpisApi(username, password, args, args.sessiondir)
-	method = getattr(api, args.action, None)
-	if callable(method):
-		method()
-		# print(json.dumps(api.getResults(), sort_keys=True, indent=4))
-	else:
-		print("This action is not available.")
+	try:
+		api = WuLpisApi(username, password, args, args.sessiondir)
+		method = getattr(api, args.action, None)
+		if callable(method):
+			method()
+			# logger.log(json.dumps(api.getResults(), sort_keys=True, indent=4))
+		else:
+			logger.log("This action is not available.")
+	except Exception:
+		logger.error(traceback.format_exc())
+		exit()

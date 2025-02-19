@@ -3,3 +3,4 @@ creds.txt
 *.bin
 .credentials*
 .DS_STORE
+logs/*

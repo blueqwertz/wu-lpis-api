@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import datetime, re, os, time, pickle
+import datetime, re, os, time, pickle, sys
 from lxml import html
 from bs4 import BeautifulSoup
-
+import logging
 import mechanize, time
 import ntplib
+from logger import logger
 
 class WuLpisApi():
 
@@ -42,11 +43,11 @@ class WuLpisApi():
 
 	def login(self):
 		starttime = time.time_ns()
-		print ("init time: %s" % starttime)
+		logger.info("init time: %s" % starttime)
 		self.data = {}
 
 		#if not self.load_session():
-		print("logging in %s..." % self.username)
+		logger.info("logging in %s..." % self.username)
 
 		r = self.browser.open(self.URL)
 		self.browser.select_form('login')
@@ -68,7 +69,7 @@ class WuLpisApi():
 		self.data = self.URL_scraped
 		#self.save_session()
 
-		print(f"request time {(time.time_ns() - starttime) / 1000000000}s")
+		logger.info(f"request time {(time.time_ns() - starttime) / 1000000000}s")
 
 		return self.data
 
@@ -84,37 +85,36 @@ class WuLpisApi():
 
 
 	def save_session(self):
-		# print "trying to save session ..."
+		# logger.info "trying to save session ..."
 		if not os.path.exists(os.path.dirname(self.sessionfile)):
 			try:
 				os.makedirs(os.path.dirname(self.sessionfile))
 			except:
-				if exc.errno != errno.EEXIST:
-					raise
+				raise
 		with open(self.sessionfile, 'wb') as file:
 			try:
 				# dill.dump(self.browser, file)
 				pickle.dump(self.browser, file, pickle.HIGHEST_PROTOCOL)
 			except:
 				return False
-		# print "session saved to file ..."
+		# logger.info "session saved to file ..."
 		return True
 
 
 	def load_session(self):
-		# print "trying to load session ..."
+		# logger.info "trying to load session ..."
 		if os.path.isfile(self.sessionfile):
 			with open(self.sessionfile, 'rb') as file:
 				try:
 					self.browser = pickle.load(file)
 				except:
 					return False
-			# print "session loaded from file ..."
+			# logger.info "session loaded from file ..."
 			return True
 
 
 	def infos(self):
-		# print "getting data ..."
+		# logger.info "getting data ..."
 		self.data = {}
 		self.browser.select_form('ea_stupl')
 		
@@ -259,19 +259,19 @@ class WuLpisApi():
 		form = self.browser.form
 		# Select first element in Select Options Dropdown
 		item = form.find_control(form.controls[0].name).get(self.args.sectionpoint) if self.args.sectionpoint else form.find_control(form.controls[0].name).get(None ,None, None, 0)
-		print("sectionpoint: %s" % item.name)
+		logger.info("sectionpoint: %s" % item.name)
 		item.selected = True
 		
 		timeserver = "timeserver.wu.ac.at"
-		print("syncing time with \"%s\"" % timeserver)
+		logger.info("syncing time with %s" % timeserver)
 
 		# # timeserver sync
 		c = ntplib.NTPClient()
 		response = c.request(timeserver, version=3)
-		print ("time difference: %.10f (difference is taken into account)" % response.offset)
+		logger.info("time difference: %.10f (difference is taken into account)" % response.offset)
 
-		offset = 0.8	# seconds before start time when the request should be made
-		print("offset: %s" % offset)
+		offset = 0.8 + response.offset	# seconds before start time when the request should be made
+		logger.info("offset: %.2f" % offset)
 		if self.args.planobject and self.args.course:
 			pp = "S" + self.args.planobject
 			lv = self.args.course
@@ -292,8 +292,8 @@ class WuLpisApi():
 			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
 
 			if (time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - time.time()) > 600:
-				print("\033[93mregistration starts in more than 10 minutes\033[0m")
-				print("waiting until 5 minutes before the registration starts")
+				logger.info("\033[93mregistration starts in more than 10 minutes\033[0m")
+				logger.info("waiting until 5 minutes before the registration starts")
 				login_triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - 300
 				while time.time() < login_triggertime:
 					remaining_time = login_triggertime - time.time()
@@ -305,7 +305,7 @@ class WuLpisApi():
 				return
 
 			if triggertime > time.time():
-				print("waiting until: %s (%ss)" % (time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(triggertime)), triggertime))
+				logger.info("waiting until: %s (%ss)" % (time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(triggertime)), triggertime))
 				while time.time() < triggertime:
 					remaining_time = triggertime - time.time()
 					hours, remainder = divmod(remaining_time, 3600)
@@ -313,8 +313,8 @@ class WuLpisApi():
 					print("starting in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")				
 				# time.sleep( triggertime - time.time() )
 
-		print("triggertime: %s" % triggertime)
-		print("final open time start: %s" % datetime.datetime.now())
+		logger.info("triggertime: %s" % triggertime)
+		logger.info("final open time start: %s" % datetime.datetime.now())
 		
 		# Submit registration until it was successful
 		while True:
@@ -322,21 +322,21 @@ class WuLpisApi():
 			# Reload page until registration is possible
 			while True:
 				starttime = time.time_ns()
-				print("\033[92mstart request %s\033[0m" % datetime.datetime.now())
+				logger.info("\033[92mstart request %s\033[0m" % datetime.datetime.now())
 				r = self.browser.open(self.URL_scraped + url)
-				print("\033[92mend request %s\033[0m" % datetime.datetime.now())
-				print(f"request time {(time.time_ns() - starttime) / 1000000000}s")
+				logger.info("\033[92mend request %s\033[0m" % datetime.datetime.now())
+				logger.info(f"request time {(time.time_ns() - starttime) / 1000000000}s")
 				soup = BeautifulSoup(r.read(), "html.parser")
 				if soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div.box.possible'):
 					# break out of loop to start registration progress
 					break
 				else:
-					print("\033[92mparsing done %s\033[0m" % datetime.datetime.now())
-				print("\033[93mregistration is not (yet) possibe, waiting ...\033[0m")
-				print("\033[93mreloading page and waiting for form to be submittable\033[0m")
+					logger.info("\033[92mparsing done %s\033[0m" % datetime.datetime.now())
+				logger.info("\033[93mregistration is not (yet) possibe, waiting ...\033[0m")
+				logger.info("\033[93mreloading page and waiting for form to be submittable\033[0m")
 
-			print("final open time end: %s" % datetime.datetime.now())
-			print("\033[92mregistration is possible\033[0m")
+			logger.info("final open time end: %s" % datetime.datetime.now())
+			logger.info("\033[92mregistration is possible\033[0m")
 
 			cap1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
 			cap2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
@@ -346,20 +346,20 @@ class WuLpisApi():
 			form1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('.action form')[0]["name"].strip()
 			form2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('.action form')[0]["name"].strip()
 
-			print("end time: %s" % datetime.datetime.now())
-			print("\033[92mfreie plaetze: lv1: %s, lv2: %s (if defined)\033[0m" % (free1, free2))
+			logger.info("end time: %s" % datetime.datetime.now())
+			logger.info("\033[92mfreie plaetze: lv1: %s, lv2: %s (if defined)\033[0m" % (free1, free2))
 			if free1 > 0:
 				if not form1.startswith("WLDEL"):
 					self.browser.select_form(form1)
-					print("submitting registration form1 (%s)" % form1)
+					logger.info("submitting registration form1 (%s)" % form1)
 				else:
-					print("skipping form1 (%s)" % form1)
+					logger.info("skipping form1 (%s)" % form1)
 			elif lv2:
 				if not form2.startswith("WLDEL"):
 					self.browser.select_form(form2)
-					print("submitting registration form2 (%s)" % form2)
+					logger.info("submitting registration form2 (%s)" % form2)
 				else:
-					print("skipping form2 (%s)" % form2)
+					logger.info("skipping form2 (%s)" % form2)
 
 			r = self.browser.submit()
 
@@ -369,30 +369,30 @@ class WuLpisApi():
 			
 			# Check if alert_content is available + check if registration failed
 			if alert_content and "nicht" in alert_content.text.strip() and "Warteliste" not in alert_content.text.strip():
-				print('\033[91m%s\033[0m' % alert_content.text.strip())
+				logger.info('\033[91m%s\033[0m' % alert_content.text.strip())
 				continue
 			
 			if alert_content:
 				alert_text = alert_content.text.strip()
-				print("\033[1m" + alert_text + "\033[0m")
+				logger.info("\033[1m" + alert_text + "\033[0m")
 				lv = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent
-				print("Frei: " + lv.select('div[class*="capacity_entry"]')[0].text.strip())
+				logger.info("Frei: " + lv.select('div[class*="capacity_entry"]')[0].text.strip())
 				wl_title = "Anzahl Warteliste" if not "Warteliste" in alert_text else "aktuelle Wartelistenposition / Anzahl Wartelisteneinträge"
 				if lv.select('td.capacity div[title*="%s"]' % wl_title):
-					print("Warteliste: " + lv.select('td.capacity div[title*="%s"] span' % wl_title)[0].text.strip() + " / " + lv.select('td.capacity div[title*="%s"] span' % wl_title)[0].text.strip())
+					logger.info("Warteliste: " + lv.select('td.capacity div[title*="%s"] span' % wl_title)[0].text.strip() + " / " + lv.select('td.capacity div[title*="%s"] span' % wl_title)[0].text.strip())
 					if free1 > 0:
 						try:
 							if not form2.startswith("WLDEL"):
 								self.browser.select_form(form2)
-								print("submitting registration form2 (%s)" % form)
+								logger.info("submitting registration form2 (%s)" % form)
 								r = self.browser.submit()
 							else:
-								print("skipping form2 (%s)" % form2)
+								logger.info("skipping form2 (%s)" % form2)
 						except:
-							print("could not submit form (%s)" % form2)
+							logger.info("could not submit form (%s)" % form2)
 
 			if soup.find('h3'):
-				print(soup.find('h3').find('span').text.strip())
+				logger.info(soup.find('h3').find('span').text.strip())
 
 			break
 
