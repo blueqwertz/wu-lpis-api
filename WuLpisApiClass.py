@@ -292,7 +292,7 @@ class WuLpisApi():
 			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
 
 			if (time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - time.time()) > 600:
-				logger.info("\033[93mregistration starts in more than 10 minutes\033[0m")
+				logger.info("<yellow>registration starts in more than 10 minutes</yellow>")
 				logger.info("waiting until 5 minutes before the registration starts")
 				login_triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - 300
 				while time.time() < login_triggertime:
@@ -322,21 +322,21 @@ class WuLpisApi():
 			# Reload page until registration is possible
 			while True:
 				starttime = time.time_ns()
-				logger.info("\033[92mstart request %s\033[0m" % datetime.datetime.now())
+				logger.info("<green>start request %s</green>" % datetime.datetime.now())
 				r = self.browser.open(self.URL_scraped + url)
-				logger.info("\033[92mend request %s\033[0m" % datetime.datetime.now())
+				logger.info("<green>end request %s</green>" % datetime.datetime.now())
 				logger.info(f"request time {(time.time_ns() - starttime) / 1000000000}s")
 				soup = BeautifulSoup(r.read(), "html.parser")
 				if soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div.box.possible'):
 					# break out of loop to start registration progress
 					break
 				else:
-					logger.info("\033[92mparsing done %s\033[0m" % datetime.datetime.now())
-				logger.info("\033[93mregistration is not (yet) possibe, waiting ...\033[0m")
-				logger.info("\033[93mreloading page and waiting for form to be submittable\033[0m")
+					logger.info("<green>parsing done %s</green>" % datetime.datetime.now())
+				logger.info("<yellow>registration is not (yet) possibe, waiting ...</yellow>")
+				logger.info("<yellow>reloading page and waiting for form to be submittable</yellow>")
 
 			logger.info("final open time end: %s" % datetime.datetime.now())
-			logger.info("\033[92mregistration is possible\033[0m")
+			logger.info("<green>registration is possible</green>")
 
 			cap1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
 			cap2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
@@ -347,7 +347,7 @@ class WuLpisApi():
 			form2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('.action form')[0]["name"].strip()
 
 			logger.info("end time: %s" % datetime.datetime.now())
-			logger.info("\033[92mfreie plaetze: lv1: %s, lv2: %s (if defined)\033[0m" % (free1, free2))
+			logger.info("<green>freie plaetze: lv1: %s, lv2: %s (if defined)</green>" % (free1, free2))
 			if free1 > 0:
 				if not form1.startswith("WLDEL"):
 					self.browser.select_form(form1)
@@ -369,12 +369,11 @@ class WuLpisApi():
 			
 			# Check if alert_content is available + check if registration failed
 			if alert_content and "nicht" in alert_content.text.strip() and "Warteliste" not in alert_content.text.strip():
-				logger.info('\033[91m%s\033[0m' % alert_content.text.strip())
-				continue
+				logger.info('<red>%s</red>' % alert_content.text.strip())
 			
 			if alert_content:
 				alert_text = alert_content.text.strip()
-				logger.info("\033[1m" + alert_text + "\033[0m")
+				logger.info("<bold>" + alert_text + "</bold>")
 				lv = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent
 				logger.info("Frei: " + lv.select('div[class*="capacity_entry"]')[0].text.strip())
 				wl_title = "Anzahl Warteliste" if not "Warteliste" in alert_text else "aktuelle Wartelistenposition / Anzahl Wartelisteneinträge"

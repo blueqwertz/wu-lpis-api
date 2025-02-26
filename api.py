@@ -25,6 +25,8 @@ if __name__ == '__main__':
 
 	username = file_parser(args.credfile)["username"] if args.credfile else args.username
 	password = file_parser(args.credfile)["password"] if args.credfile else args.password
+
+	logger.add("logs/output-%s.log" % username, level="INFO", colorize=False)
 	
 	if args.credfile and "sectionpoint" in file_parser(args.credfile):
 		args.sectionpoint = file_parser(args.credfile)["sectionpoint"]

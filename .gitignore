@@ -4,3 +4,4 @@ creds.txt
 .credentials*
 .DS_STORE
 logs/*
+__pychache__/
