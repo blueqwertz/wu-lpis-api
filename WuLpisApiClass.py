@@ -292,8 +292,8 @@ class WuLpisApi():
 			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
 
 			if (time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - time.time()) > 600:
-				logger.info("<yellow>registration starts in more than 10 minutes</yellow>")
-				logger.info("waiting until 5 minutes before the registration starts")
+				logger.opt(colors=True).info("<yellow>registration starts in more than 10 minutes</yellow>")
+				logger.opt(colors=True).info("<green>waiting until 5 minutes before the registration starts</green>")
 				login_triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - 300
 				while time.time() < login_triggertime:
 					remaining_time = login_triggertime - time.time()
@@ -322,21 +322,21 @@ class WuLpisApi():
 			# Reload page until registration is possible
 			while True:
 				starttime = time.time_ns()
-				logger.info("<green>start request %s</green>" % datetime.datetime.now())
+				logger.opt(colors=True).info("<green>start request %s</green>" % datetime.datetime.now())
 				r = self.browser.open(self.URL_scraped + url)
-				logger.info("<green>end request %s</green>" % datetime.datetime.now())
+				logger.opt(colors=True).info("<green>end request %s</green>" % datetime.datetime.now())
 				logger.info(f"request time {(time.time_ns() - starttime) / 1000000000}s")
 				soup = BeautifulSoup(r.read(), "html.parser")
 				if soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div.box.possible'):
 					# break out of loop to start registration progress
 					break
 				else:
-					logger.info("<green>parsing done %s</green>" % datetime.datetime.now())
-				logger.info("<yellow>registration is not (yet) possibe, waiting ...</yellow>")
-				logger.info("<yellow>reloading page and waiting for form to be submittable</yellow>")
+					logger.opt(colors=True).info("<green>parsing done %s</green>" % datetime.datetime.now())
+				logger.opt(colors=True).info("<yellow>registration is not (yet) possibe, waiting ...</yellow>")
+				logger.opt(colors=True).info("<yellow>reloading page and waiting for form to be submittable</yellow>")
 
 			logger.info("final open time end: %s" % datetime.datetime.now())
-			logger.info("<green>registration is possible</green>")
+			logger.opt(colors=True).info("<green>registration is possible</green>")
 
 			cap1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
 			cap2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
@@ -347,7 +347,7 @@ class WuLpisApi():
 			form2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('.action form')[0]["name"].strip()
 
 			logger.info("end time: %s" % datetime.datetime.now())
-			logger.info("<green>freie plaetze: lv1: %s, lv2: %s (if defined)</green>" % (free1, free2))
+			logger.opt(colors=True).info("<green>freie plaetze: lv1: %s, lv2: %s (if defined)</green>" % (free1, free2))
 			if free1 > 0:
 				if not form1.startswith("WLDEL"):
 					self.browser.select_form(form1)
@@ -369,11 +369,11 @@ class WuLpisApi():
 			
 			# Check if alert_content is available + check if registration failed
 			if alert_content and "nicht" in alert_content.text.strip() and "Warteliste" not in alert_content.text.strip():
-				logger.info('<red>%s</red>' % alert_content.text.strip())
+				logger.opt(colors=True).info('<red>%s</red>' % alert_content.text.strip())
 			
 			if alert_content:
 				alert_text = alert_content.text.strip()
-				logger.info("<bold>" + alert_text + "</bold>")
+				logger.opt(colors=True).info("<bold>" + alert_text + "</bold>")
 				lv = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent
 				logger.info("Frei: " + lv.select('div[class*="capacity_entry"]')[0].text.strip())
 				wl_title = "Anzahl Warteliste" if not "Warteliste" in alert_text else "aktuelle Wartelistenposition / Anzahl Wartelisteneinträge"

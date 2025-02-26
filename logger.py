@@ -5,4 +5,3 @@ from loguru import logger
 os.makedirs("logs", exist_ok=True)
 logger.remove()
 logger.add(sys.stdout, format="{message}", level="INFO", colorize=True)
-logger.opt(colors=True)
