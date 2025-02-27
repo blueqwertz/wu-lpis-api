@@ -5,9 +5,9 @@ from logger import logger
 import updater
 
 try:
-	updater.check_for_update()
+	updater.check()
 except Exception:
-	logger.opt(colors=True).error("<red>could not check for updates</red>")
+	logger.opt(colors=True).error("<red>failed to check for updates: %s</red>" % traceback.format_exc())
 
 def file_parser(filepath, separator="="):
 	data = {}
