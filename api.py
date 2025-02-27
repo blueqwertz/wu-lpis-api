@@ -2,6 +2,9 @@ import argparse
 import traceback
 from WuLpisApiClass import WuLpisApi
 from logger import logger
+import updater
+
+updater.check_for_update()
 
 def file_parser(filepath, separator="="):
 	data = {}
