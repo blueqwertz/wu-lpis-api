@@ -383,7 +383,7 @@ class WuLpisApi():
 						try:
 							if not form2.startswith("WLDEL"):
 								self.browser.select_form(form2)
-								logger.info("submitting registration form2 (%s)" % form)
+								logger.info("submitting registration form2 (%s)" % form2)
 								r = self.browser.submit()
 							else:
 								logger.info("skipping form2 (%s)" % form2)
@@ -394,4 +394,3 @@ class WuLpisApi():
 				logger.info(soup.find('h3').find('span').text.strip())
 
 			break
-
