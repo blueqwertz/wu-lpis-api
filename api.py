@@ -4,7 +4,10 @@ from WuLpisApiClass import WuLpisApi
 from logger import logger
 import updater
 
-updater.check_for_update()
+try:
+	updater.check_for_update()
+except Exception:
+	logger.opt(colors=True).error("<red>could not check for updates</red>")
 
 def file_parser(filepath, separator="="):
 	data = {}
