@@ -4,10 +4,15 @@ from WuLpisApiClass import WuLpisApi
 from logger import logger
 import updater
 
-try:
-	updater.check()
-except Exception:
-	logger.opt(colors=True).error("<red>failed to check for updates: %s</red>" % traceback.format_exc())
+DEBUG = True
+
+if not DEBUG:
+	try:
+		updater.check()
+	except Exception:
+		logger.opt(colors=True).error("<red>failed to check for updates: %s</red>" % traceback.format_exc())
+else:
+	logger.opt(colors=True).warning("<yellow>debug mode is enabled - skipping auto-updater</yellow>")
 
 def file_parser(filepath, separator="="):
 	data = {}
@@ -34,7 +39,7 @@ if __name__ == '__main__':
 
 	logger.add("logs/output-%s.log" % username, level="INFO", colorize=False)
 	
-	if args.credfile and "sectionpoint" in file_parser(args.credfile):
+	if args.credfile and "sectionpoint" in file_parser(args.credfile) and not args.sectionpoint:
 		args.sectionpoint = file_parser(args.credfile)["sectionpoint"]
 	try:
 		api = WuLpisApi(username, password, args, args.sessiondir)
