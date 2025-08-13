@@ -4,7 +4,7 @@ from WuLpisApiClass import WuLpisApi
 from logger import logger
 import updater
 
-DEBUG = True
+DEBUG = False
 
 if not DEBUG:
 	try:
