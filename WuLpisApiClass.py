@@ -174,8 +174,6 @@ class WuLpisApi():
 				if planpunkt.select('a[href*="DLVO"]'):
 					pp[key]["lv_url"] = planpunkt.select('a[href*="DLVO"]')[0]['href']
 					pp[key]["lv_status"] = planpunkt.select('a[href*="DLVO"]')[0].text.strip()
-				if planpunkt.select('a[href*="GP"]'):
-					pp[key]["prf_url"] = planpunkt.select('a[href*="GP"]')[0]['href']
 
 				if '/' in planpunkt.select('td:nth-of-type(2)')[0].text:
 					pp[key]["attempts"] = planpunkt.select('td:nth-of-type(2) span:nth-of-type(1)')[0].text.strip()
@@ -247,6 +245,7 @@ class WuLpisApi():
 					print(f"(Anmeldung bis: {lv['date_end']})" if "date_end" in lv else "", end="")
 					
 					print("\033[0m")
+
 							
 		self.data['pp'] = pp				
 		return self.data
@@ -286,6 +285,11 @@ class WuLpisApi():
 
 		triggertime = 0
 		soup = BeautifulSoup(r.read(), "html.parser")
+
+		if not soup.find('table', {"class" : "b3k-data"}).find('a', text=lv) or not soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2):
+			logger.opt(colors=True).error("<red>lv %s or %s not found</red>" % (lv, lv2))
+			logger.opt(colors=True).info("<yellow>check if the course is available in lpis</yellow>")
+			return
 
 		date = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('.action .timestamp span')[0].text.strip()
 		if 'ab' in date:
