@@ -120,6 +120,14 @@ class WuLpisApi():
 		
 		form = self.browser.form
 
+		# Show all possible studies
+		print("available sectionpoints:")
+		studies = form.find_control(form.controls[0].name)
+		for study in studies.get_items():
+			if study.attrs.get('id') == 'abgewaehlt':
+				continue
+			print("    {:<20} {}".format(study.get_labels()[0].text.strip() if study.get_labels() else '', study.name))
+
 		# Select first element in Select Options Dropdown
 		item = form.find_control(form.controls[0].name).get(self.args.sectionpoint) if self.args.sectionpoint else form.find_control(form.controls[0].name).get(None ,None, None, 0)
 		print("sectionpoint: %s" % item.name)
@@ -218,9 +226,9 @@ class WuLpisApi():
 							if lv.select('td.capacity div[title*="Anzahl Warteliste"]'):
 								pp[key]['lvs'][number]['waitlist'] = lv.select('td.capacity div[title*="Anzahl Warteliste"]')[0].text.strip()
 
-		lv_index = 0
+		# lv_index = 0
 
-		lv_register = []
+		# lv_register = []
 
 		for pp_id in pp:
 			print(f"{'   ' * int(pp[pp_id]['depth'])}{pp_id} {pp[pp_id]['name']}")
@@ -228,9 +236,9 @@ class WuLpisApi():
 				print(f"\033[94m{'   ' * int(pp[pp_id]['depth'] + 1)}{pp[pp_id]['lv_status']}\033[0m")
 			elif "lvs" in pp[pp_id]:
 				for lv_id in pp[pp_id]["lvs"]:
-					lv_index += 1
+					# lv_index += 1
 					lv = pp[pp_id]["lvs"][lv_id]
-					lv_register.append({"lv": lv_id, "pp": pp_id, "name": pp[pp_id]["name"]})
+					# lv_register.append({"lv": lv_id, "pp": pp_id, "name": pp[pp_id]["name"]})
 					print(f"{'   ' * int(pp[pp_id]['depth'] + 1)}", end="")
 
 					print("\033[91m" if int(lv["free"]) == 0 or lv["status"] == "Anmeldung nicht möglich" else "\033[92m", end="")

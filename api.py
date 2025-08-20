@@ -4,15 +4,12 @@ from WuLpisApiClass import WuLpisApi
 from logger import logger
 import updater
 
-DEBUG = False
 
-if not DEBUG:
-	try:
-		updater.check()
-	except Exception:
-		logger.opt(colors=True).error("<red>failed to check for updates: %s</red>" % traceback.format_exc())
-else:
-	logger.opt(colors=True).warning("<yellow>debug mode is enabled - skipping auto-updater</yellow>")
+try:
+	updater.check()
+except Exception:
+	logger.opt(colors=True).error("<red>failed to check for updates: %s</red>" % traceback.format_exc())
+
 
 def file_parser(filepath, separator="="):
 	data = {}
