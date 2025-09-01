@@ -8,6 +8,7 @@ import logging
 import mechanize, time
 import ntplib
 from logger import logger
+import questionary
 
 class WuLpisApi():
 
@@ -121,12 +122,10 @@ class WuLpisApi():
 		form = self.browser.form
 
 		# Show all possible studies
-		print("available sectionpoints:")
-		studies = form.find_control(form.controls[0].name)
-		for study in studies.get_items():
-			if study.attrs.get('id') == 'abgewaehlt':
-				continue
-			print("    {:<20} {}".format(study.get_labels()[0].text.strip() if study.get_labels() else '', study.name))
+		sectionpoints = [{"name": x.get_labels()[0].text.strip() if x.get_labels() else '', "value": x.name} for x in form.find_control(form.controls[0].name).get_items() if not x.attrs.get('id') == "abgewaehlt"]
+
+		if not self.args.sectionpoint:
+			self.args.sectionpoint = questionary.select("select sectionpoint:",choices=sectionpoints).ask()
 
 		# Select first element in Select Options Dropdown
 		item = form.find_control(form.controls[0].name).get(self.args.sectionpoint) if self.args.sectionpoint else form.find_control(form.controls[0].name).get(None ,None, None, 0)
@@ -311,7 +310,8 @@ class WuLpisApi():
 					remaining_time = login_triggertime - time.time()
 					hours, remainder = divmod(remaining_time, 3600)
 					minutes, seconds = divmod(remainder, 60)
-					print("logging in again in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")
+					print("logging in again in: {:02d}:{:02d}:{:04.1f}".format(int(hours), int(minutes), seconds), end="\r")
+					time.sleep(0.1)
 				self.login()
 				self.registration()
 				return

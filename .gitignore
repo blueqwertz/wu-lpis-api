@@ -5,3 +5,5 @@ creds.txt
 .DS_STORE
 logs/*
 __pychache__/
+analyser.py
+url.txt
