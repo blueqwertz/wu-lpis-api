@@ -4,7 +4,6 @@
 import datetime, re, os, time, pickle, sys
 from lxml import html
 from bs4 import BeautifulSoup
-import logging
 import mechanize, time
 import ntplib
 from logger import logger
@@ -264,19 +263,21 @@ class WuLpisApi():
 		
 		form = self.browser.form
 		# Select first element in Select Options Dropdown
-		item = form.find_control(form.controls[0].name).get(self.args.sectionpoint) if self.args.sectionpoint else form.find_control(form.controls[0].name).get(None ,None, None, 0)
+		self.args.sectionpoint = self.args.sectionpoint or form.find_control(form.controls[0].name).get_items()[0].name
+		print(self.args.sectionpoint)
+		item = form.find_control(form.controls[0].name).get(self.args.sectionpoint)
 		logger.info("sectionpoint: %s" % item.name)
 		item.selected = True
 		
 		timeserver = "timeserver.wu.ac.at"
 		logger.info("syncing time with %s" % timeserver)
 
-		# # timeserver sync
+		# timeserver sync
 		c = ntplib.NTPClient()
 		response = c.request(timeserver, version=3)
 		logger.info("time difference: %.10f (difference is taken into account)" % response.offset)
 
-		offset = 0.8 + response.offset	# seconds before start time when the request should be made
+		offset = 0.5 + response.offset	# seconds before start time when the request should be made
 		logger.info("offset: %.2f" % offset)
 		if self.args.planobject and self.args.course:
 			pp = "S" + self.args.planobject
@@ -293,13 +294,15 @@ class WuLpisApi():
 		triggertime = 0
 		soup = BeautifulSoup(r.read(), "html.parser")
 
+		# check if lv and lv2 exist
 		if not soup.find('table', {"class" : "b3k-data"}).find('a', text=lv) or not soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2):
 			logger.opt(colors=True).error("<red>lv %s or %s not found</red>" % (lv, lv2))
 			logger.opt(colors=True).info("<yellow>check if the course is available in lpis</yellow>")
 			return
 
+		# wait until registration start time - offset
 		date = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('.action .timestamp span')[0].text.strip()
-		if 'ab' in date:
+		if 'ab' in date and False:
 			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
 
 			if (time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - time.time()) > 600:
@@ -325,84 +328,75 @@ class WuLpisApi():
 					print("starting in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")				
 				# time.sleep( triggertime - time.time() )
 
+		print("ENTERING CRITICAL TIME ZONE — NO MORE DELAYS")
+
 		logger.info("triggertime: %s" % triggertime)
 		logger.info("final open time start: %s" % datetime.datetime.now())
 		
-		# Submit registration until it was successful
+		# prepare form submission requests in advance and fire POST directly at trigger time
+		logger.opt(colors=True).info("<green>preparing prebuilt POST requests</green>")
+
+		# extract the form names for the primary and (optional) secondary LV
+		form1 = soup.find('table', {"class": "b3k-data"}).find('a', text=lv).parent.parent.select('.action form')[0]["name"].strip()
+		form2 = soup.find('table', {"class": "b3k-data"}).find('a', text=lv2).parent.parent.select('.action form')[0]["name"].strip() if lv2 else None
+
+		# build raw mechanize Request objects ahead of time
+		self.browser.select_form(form1)
+		req1 = self.browser.click()  # ready-to-send POST for primary LV
+
+		req2 = None
+		if lv2 and form2 and not form2.startswith("WLDEL"):
+			self.browser.select_form(form2)
+			req2 = self.browser.click()  # ready-to-send POST for secondary LV
+
+		logger.opt(colors=True).info("<green>registration window assumed open — sending POST request</green>")
+
 		while True:
-	
-			# Reload page until registration is possible
-			while True:
+			# fire the primary POST request immediately without reloading
+			def _submit_and_parse(_request, _form, _lv):
+				logger.info("submitting registration form (%s)" % (_request.get_full_url() if hasattr(_request, 'get_full_url') else 'request'))
+				_request.set_data(_request.get_data().replace("&DISABLED=DISABLED", ""))
+
+				_data = {
+					"SH": self.args.sectionpoint.split("_")[-1],
+					"T": _form.split("_")[-2],
+					"LV": _form.split("_")[-2],
+					"VID": _lv,
+					"RA": "span"
+				}
+				
+				for (_k, _v) in _data.items():
+					if not _k in str(_request.get_data()):
+						_request.set_data(_request.get_data() + "&%s=%s" % (_k, _v))
+
+				# print url and all data of the request for debugging
+				print("DEBUG",_request.get_full_url(),_request.get_data())
+
 				starttime = time.time_ns()
-				logger.opt(colors=True).info("<green>start request %s</green>" % datetime.datetime.now())
-				r = self.browser.open(self.URL_scraped + url)
+				resp = self.browser.open(_request)
 				logger.opt(colors=True).info("<green>end request %s</green>" % datetime.datetime.now())
 				logger.info(f"request time {(time.time_ns() - starttime) / 1000000000}s")
-				soup = BeautifulSoup(r.read(), "html.parser")
-				if soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div.box.possible'):
-					# break out of loop to start registration progress
-					break
-				else:
-					logger.opt(colors=True).info("<green>parsing done %s</green>" % datetime.datetime.now())
-				logger.opt(colors=True).info("<yellow>registration is not (yet) possibe, waiting ...</yellow>")
-				logger.opt(colors=True).info("<yellow>reloading page and waiting for form to be submittable</yellow>")
+				return BeautifulSoup(resp.read(), "html.parser")
 
-			logger.info("final open time end: %s" % datetime.datetime.now())
-			logger.opt(colors=True).info("<green>registration is possible</green>")
+			soup = _submit_and_parse(req1, form1, lv)
 
-			cap1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
-			cap2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('div[class*="capacity_entry"]')[0].text.strip()
-			free1 = int(cap1[:cap1.rindex('/')-1])
-			free2 = int(cap2[:cap2.rindex('/')-1])
-
-			form1 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('.action form')[0]["name"].strip()
-			form2 = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2).parent.parent.select('.action form')[0]["name"].strip()
-
-			logger.info("end time: %s" % datetime.datetime.now())
-			logger.opt(colors=True).info("<green>freie plaetze: lv1: %s, lv2: %s (if defined)</green>" % (free1, free2))
-			if free1 > 0:
-				if not form1.startswith("WLDEL"):
-					self.browser.select_form(form1)
-					logger.info("submitting registration form1 (%s)" % form1)
-				else:
-					logger.info("skipping form1 (%s)" % form1)
-			elif lv2:
-				if not form2.startswith("WLDEL"):
-					self.browser.select_form(form2)
-					logger.info("submitting registration form2 (%s)" % form2)
-				else:
-					logger.info("skipping form2 (%s)" % form2)
-
-			r = self.browser.submit()
-
-			soup = BeautifulSoup(r.read(), "html.parser")
-
-			alert_content = soup.find('div', {"class" : 'b3k_alert_content'})
-			
-			# Check if alert_content is available + check if registration failed
-			if alert_content and "nicht" in alert_content.text.strip() and "Warteliste" not in alert_content.text.strip():
-				logger.opt(colors=True).info('<red>%s</red>' % alert_content.text.strip())
-			
+			# handle server feedback; if not successful and lv2 exists, try the secondary POST immediately
+			alert_content = soup.find('div', {"class": 'b3k_alert_content'})
 			if alert_content:
-				alert_text = alert_content.text.strip()
-				logger.opt(colors=True).info("<bold>" + alert_text + "</bold>")
-				lv = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent
-				logger.info("Frei: " + lv.select('div[class*="capacity_entry"]')[0].text.strip())
-				wl_title = "Anzahl Warteliste" if not "Warteliste" in alert_text else "aktuelle Wartelistenposition / Anzahl Wartelisteneinträge"
-				if lv.select('td.capacity div[title*="%s"]' % wl_title):
-					logger.info("Warteliste: " + lv.select('td.capacity div[title*="%s"] span' % wl_title)[0].text.strip() + " / " + lv.select('td.capacity div[title*="%s"] span' % wl_title)[0].text.strip())
-					if free1 > 0:
-						try:
-							if not form2.startswith("WLDEL"):
-								self.browser.select_form(form2)
-								logger.info("submitting registration form2 (%s)" % form2)
-								r = self.browser.submit()
-							else:
-								logger.info("skipping form2 (%s)" % form2)
-						except:
-							logger.info("could not submit form (%s)" % form2)
+				logger.opt(colors=True).info("<bold>" + alert_content.text.strip() + "</bold>")
 
-			if soup.find('h3'):
-				logger.info(soup.find('h3').find('span').text.strip())
+			# if there's a transaction error, retry the primary submission immediately
+			transaction_error = soup.find("h3")
+			if transaction_error and "Transaktionsreihenfolge" in transaction_error.find('span').text.strip():
+				logger.opt(colors=True).info("<yellow>%s</yellow>" % transaction_error.find('span').text.strip())
+				logger.opt(colors=True).info("<yellow>too early — retrying immediately</yellow>")
+				continue
 
+			# consider it a failure if there's an alert with a negative message not related to waitlist
+			if bool(alert_content and ("nicht" in alert_content.text.strip()) and ("Warteliste" not in alert_content.text.strip())) and req2 is not None:
+				logger.opt(colors=True).info("<yellow>primary submission failed — trying secondary LV immediately</yellow>")
+				soup = _submit_and_parse(req2, form2, lv2)
+				alert_content = soup.find('div', {"class": 'b3k_alert_content'})
+				if alert_content:
+					logger.opt(colors=True).info("<bold>" + alert_content.text.strip() + "</bold>")			
 			break
