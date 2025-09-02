@@ -302,7 +302,7 @@ class WuLpisApi():
 
 		# wait until registration start time - offset
 		date = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('.action .timestamp span')[0].text.strip()
-		if 'ab' in date and False:
+		if 'ab' in date:
 			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
 
 			if (time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - time.time()) > 600:
