@@ -328,13 +328,11 @@ class WuLpisApi():
 					print("starting in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")				
 				# time.sleep( triggertime - time.time() )
 
-		print("ENTERING CRITICAL TIME ZONE — NO MORE DELAYS")
-
 		logger.info("triggertime: %s" % triggertime)
 		logger.info("final open time start: %s" % datetime.datetime.now())
 		
 		# prepare form submission requests in advance and fire POST directly at trigger time
-		logger.opt(colors=True).info("<green>preparing prebuilt POST requests</green>")
+		logger.opt(colors=True).info("<green>preparing POST requests</green>")
 
 		# extract the form names for the primary and (optional) secondary LV
 		form1 = soup.find('table', {"class": "b3k-data"}).find('a', text=lv).parent.parent.select('.action form')[0]["name"].strip()
@@ -357,26 +355,30 @@ class WuLpisApi():
 				logger.info("submitting registration form (%s)" % (_request.get_full_url() if hasattr(_request, 'get_full_url') else 'request'))
 				_request.set_data(_request.get_data().replace("&DISABLED=DISABLED", ""))
 
+				_params = dict(pair.split("=", 1) if "=" in pair else (pair, "") for pair in _request.get_data().split("&"))
+
 				_data = {
 					"SH": self.args.sectionpoint.split("_")[-1],
 					"T": _form.split("_")[-2],
 					"LV": _form.split("_")[-2],
 					"VID": _lv,
-					"RA": "span"
+					"RA": "span",
+					"cmd": "anmelden"
 				}
 				
-				for (_k, _v) in _data.items():
-					if not _k in str(_request.get_data()):
-						_request.set_data(_request.get_data() + "&%s=%s" % (_k, _v))
+				for (k, v) in _data.items():
+					_params[k] = v
+				
+				_request.set_data("&".join(f"{k}={v}" for k, v in _params.items()))
 
 				# print url and all data of the request for debugging
 				print("DEBUG",_request.get_full_url(),_request.get_data())
 
 				starttime = time.time_ns()
-				resp = self.browser.open(_request)
+				_response = self.browser.open(_request)
 				logger.opt(colors=True).info("<green>end request %s</green>" % datetime.datetime.now())
 				logger.info(f"request time {(time.time_ns() - starttime) / 1000000000}s")
-				return BeautifulSoup(resp.read(), "html.parser")
+				return BeautifulSoup(_response.read(), "html.parser")
 
 			soup = _submit_and_parse(req1, form1, lv)
 
@@ -389,7 +391,7 @@ class WuLpisApi():
 			transaction_error = soup.find("h3")
 			if transaction_error and "Transaktionsreihenfolge" in transaction_error.find('span').text.strip():
 				logger.opt(colors=True).info("<yellow>%s</yellow>" % transaction_error.find('span').text.strip())
-				logger.opt(colors=True).info("<yellow>too early — retrying immediately</yellow>")
+				logger.opt(colors=True).info("<yellow>error — retrying immediately</yellow>")
 				continue
 
 			# consider it a failure if there's an alert with a negative message not related to waitlist
