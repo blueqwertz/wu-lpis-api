@@ -1,9 +1,13 @@
-import argparse
-import traceback
-from WuLpisApiClass import WuLpisApi
-from logger import logger
-import updater
-
+try:
+	import argparse
+	import traceback
+	from WuLpisApiClass import WuLpisApi
+	from logger import logger
+	import updater
+except ImportError as e:
+	# install the missing modules
+	import subprocess, sys
+	subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
 
 try:
 	updater.check()
@@ -43,7 +47,6 @@ if __name__ == '__main__':
 		method = getattr(api, args.action, None)
 		if callable(method):
 			method()
-			# logger.log(json.dumps(api.getResults(), sort_keys=True, indent=4))
 		else:
 			logger.log("This action is not available.")
 	except Exception:

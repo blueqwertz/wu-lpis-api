@@ -4,3 +4,4 @@ mechanize
 ntplib
 loguru
 requests
+questionary
