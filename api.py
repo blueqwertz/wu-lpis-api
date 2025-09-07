@@ -6,8 +6,11 @@ try:
 	import updater
 except ImportError as e:
 	# install the missing modules
-	import subprocess, sys
+	print("Some modules are missing. Installing them now...")
+	import subprocess, sys, os
 	subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+	print("Restarting program...")
+	os.execv(sys.executable, [sys.executable] + sys.argv)
 
 try:
 	updater.check()

@@ -125,7 +125,7 @@ class WuLpisApi():
 		sectionpoints = [{"name": x.get_labels()[0].text.strip() if x.get_labels() else '', "value": x.name} for x in form.find_control(form.controls[0].name).get_items() if not x.attrs.get('id') == "abgewaehlt"]
 
 		if not self.args.sectionpoint:
-			self.args.sectionpoint = questionary.select("select sectionpoint:",choices=sectionpoints).ask()
+			self.args.sectionpoint = questionary.select("select sectionpoint (enter):",choices=sectionpoints).ask()
 
 		# Select first element in Select Options Dropdown
 		item = form.find_control(form.controls[0].name).get(self.args.sectionpoint) if self.args.sectionpoint else form.find_control(form.controls[0].name).get(None ,None, None, 0)
