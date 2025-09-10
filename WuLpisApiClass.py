@@ -277,7 +277,7 @@ class WuLpisApi():
 		response = c.request(timeserver, version=3)
 		logger.info("time difference: %.10f (difference is taken into account)" % response.offset)
 
-		offset = 0.5 + response.offset	# seconds before start time when the request should be made
+		offset = response.offset	# seconds before start time when the request should be made
 		logger.info("offset: %.2f" % offset)
 		if self.args.planobject and self.args.course:
 			pp = "S" + self.args.planobject
@@ -305,10 +305,10 @@ class WuLpisApi():
 		if 'ab' in date:
 			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
 
-			if (time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - time.time()) > 600:
+			if (triggertime - time.time()) > 600:
 				logger.opt(colors=True).info("<yellow>registration starts in more than 10 minutes</yellow>")
 				logger.opt(colors=True).info("<green>waiting until 5 minutes before the registration starts</green>")
-				login_triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - 300
+				login_triggertime = triggertime - 300
 				while time.time() < login_triggertime:
 					remaining_time = login_triggertime - time.time()
 					hours, remainder = divmod(remaining_time, 3600)
@@ -372,7 +372,7 @@ class WuLpisApi():
 				_request.set_data("&".join(f"{k}={v}" for k, v in _params.items()))
 
 				# print url and all data of the request for debugging
-				print("DEBUG",_request.get_full_url(),_request.get_data())
+				logger.opt(colors=True).info("DEBUG %s %s" % (_request.get_full_url(),_request.get_data()))
 
 				starttime = time.time_ns()
 				_response = self.browser.open(_request)
