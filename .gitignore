@@ -2,6 +2,7 @@ creds.txt
 *.pyc
 *.bin
 .credentials*
+creds/
 .DS_STORE
 logs/*
 __pychache__/
