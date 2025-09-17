@@ -580,6 +580,9 @@ class WuLpisApi():
 
 		def _parse_date(d: str):
 			# Expect DD.MM.YYYY, ignore if malformed
+			if d == "vorläufig":
+				# return todays date
+				return datetime.date.today()
 			try:
 				return datetime.datetime.strptime(d, "%d.%m.%Y").date()
 			except Exception:
