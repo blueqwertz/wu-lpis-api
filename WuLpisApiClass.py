@@ -53,7 +53,7 @@ class WuLpisApi():
 		r = self.browser.open(self.URL)
 		self.browser.select_form('login')
 
-		tree = html.fromstring(r.read()) # removes comments from html 
+		tree = html.fromstring(r.read()) # removes comments from html
 		input_username = list(set(tree.xpath("//input[@accesskey='u']/@name")))[0]
 		input_password = list(set(tree.xpath("//input[@accesskey='p']/@name")))[0]
 
@@ -406,3 +406,308 @@ class WuLpisApi():
 				logger.info(soup.find('h3').find('span').text.strip())
 
 			break
+
+	def grades(self):
+		"""
+		Parse the LPIS "Noten" (grades) page and return a list of grade entries.
+
+		Each entry is a dict with keys:
+		  - entry_id: str (e.g., "E24906699")
+		  - exam_type: str (short type like "FPm", "FPs", "LVP", "PI", etc.)
+		  - exam_type_title: str (full title from the span title attribute, e.g., "Fachprüfung (mündlich)")
+		  - title: str (course/exam title)
+		  - professor: str or "" (lecturer line, if present)
+		  - sst: float or None
+		  - ects: float or None
+		  - grade_text: str (e.g., "sehr gut", "befriedigend", "mit Erfolg teilgenommen", "nicht genügend")
+		  - grade_date: str (DD.MM.YYYY)
+		  - study: str (short study name shown, e.g., "BaWiRe-23")
+		  - study_title: str (full study title from the title attribute)
+		  - row_class: str (CSS class on the <tr>, e.g., "td0", "td1")
+		  - outdated: bool (True if row has class "outdated")
+		  - outdated_reason: str or "" (from tr["title"], if present)
+		"""
+		r = self.browser.open(self.URL_scraped + "NT")
+		soup = BeautifulSoup(r.read(), "html.parser")
+
+		def _txt(x):
+			return x.get_text(strip=True) if x else ""
+
+		def _to_float(x):
+			x = (x or "").strip()
+			if not x or x.upper() == "N/A":
+				return None
+			try:
+				# numbers appear with dot as decimal separator in the HTML
+				return float(x.replace(",", "."))
+			except ValueError:
+				return None
+
+		grades_list = []
+
+		table = soup.find("table", {"class": "b3k-data"})
+
+		for tr in table.tbody.find_all("tr", recursive=False):
+			# Basic row metadata
+			row_classes = tr.get("class", [])
+			row_class = " ".join([c for c in row_classes if c])
+			outdated = "outdated" in row_classes
+			outdated_reason = tr.get("title", "") if outdated else ""
+
+			tds = tr.find_all("td", recursive=False)
+			if len(tds) < 4:
+				continue
+
+			# --- Column 1: Title/Type/Professor ---
+			td_title = tds[0]
+			anchor = td_title.find("a")
+			entry_id = anchor.get("id", "") if anchor else ""
+
+			type_span = td_title.find("b")
+			exam_type_el = type_span.find("span") if type_span else None
+			exam_type = _txt(exam_type_el)
+			exam_type_title = exam_type_el.get("title", "") if exam_type_el else ""
+
+			# The actual title is the next span after the bold span
+			title_span = None
+			spans = td_title.find_all("span", recursive=False)
+			if spans:
+				# by inspection, the first span (inside <b>) is exam type, the second span is title
+				title_span = spans[-1] if len(spans) >= 1 else None
+			title = _txt(title_span)
+
+			# Professor line lives as text after a <br/>
+			# Robust approach: get all direct text nodes after the first <br/> and strip
+			professor = ""
+			# collect the text nodes that are not inside <span>/<b>
+			# Often the professor line contains multiple non-breaking spaces; normalize spaces
+			for br in td_title.find_all("br"):
+				# take text immediately following this br
+				if br.next_sibling and isinstance(br.next_sibling, str):
+					professor = br.next_sibling.strip()
+				else:
+					# sometimes wrapped in tags
+					sib = br.find_next_sibling(text=True)
+					if sib:
+						professor = sib.strip()
+				if professor:
+					# replace multiple spaces / non-breaking spaces
+					professor = re.sub(r"\s+", " ", professor)
+					break
+
+			# --- Column 2: SSt / ECTS ---
+			td_sst_ects = tds[1]
+			divs = td_sst_ects.find_all("div", recursive=False)
+			sst = _to_float(_txt(divs[0]) if len(divs) >= 1 else "")
+			ects = _to_float(_txt(divs[1]) if len(divs) >= 2 else "")
+
+			# --- Column 3: Grade text and date ---
+			td_grade = tds[2]
+			grade_spans = td_grade.find_all("span", recursive=False)
+			grade_text = _txt(grade_spans[0]) if len(grade_spans) >= 1 else ""
+			grade_date = _txt(grade_spans[1]) if len(grade_spans) >= 2 else ""
+
+			# --- Column 4: Study ---
+			td_study = tds[3]
+			study = _txt(td_study)
+			study_title = td_study.get("title", "")
+
+			grades_list.append({
+				"entry_id": entry_id,
+				"exam_type": exam_type,
+				"exam_type_title": exam_type_title,
+				"title": title,
+				"professor": professor,
+				"sst": sst,
+				"ects": ects,
+				"grade_text": grade_text,
+				"grade_date": grade_date,
+				"study": study,
+				"study_title": study_title,
+				"row_class": row_class,
+				"outdated": outdated,
+				"outdated_reason": outdated_reason,
+			})
+
+			# Pretty-print grades as a simple fixed-width table
+			if len(grades_list) == 1:
+				# print header once when seeing the first row
+				header = (
+					f"{'Typ':<4} "
+					f"{'Titel':<50} "
+					f"{'Professor:in':<24} "
+					f"{'ECTS':>5} "
+					f"{'Note':<18} "
+					f"{'Datum':<10} "
+					f"{'Studium':<12}"
+				)
+				print(header)
+				print("-" * len(header))
+
+			# helpers (local, lightweight)
+			_clip = lambda s, n: (s or "") if len(s or "") <= n else (s or "")[: max(0, n - 1)] + "…"
+			_fmt = lambda x: "" if x is None else ("%g" % x)
+
+			row = (
+				f"{_clip(exam_type, 4):<4} "
+				f"{_clip(title, 50):<50} "
+				f"{_clip(professor, 24):<24} "
+				f"{_fmt(ects):>5} "
+				f"{_clip(grade_text, 18):<18} "
+				f"{_clip(grade_date, 10):<10} "
+				f"{_clip(study, 12):<12}"
+			)
+			print(row)
+		
+		def _grade_to_numeric(txt: str):
+			if not txt:
+				return None
+			t = txt.strip().lower()
+			# Map common German grade texts to Austrian numeric scale
+			if "sehr gut" in t:
+				return 1.0
+			if t == "gut" or "\xA0gut" in t:  # normalize NBSP edge-cases
+				return 2.0
+			if "befriedigend" in t:
+				return 3.0
+			if "genügend" in t and "nicht" not in t:
+				return 4.0
+			if "nicht genügend" in t:
+				# Exclude failing grades entirely from GPA/ECTS calculations
+				return None
+			# Non-numeric/pass grades (e.g., "mit Erfolg teilgenommen") do not affect GPA
+			return None
+
+		def _parse_date(d: str):
+			# Expect DD.MM.YYYY, ignore if malformed
+			try:
+				return datetime.datetime.strptime(d, "%d.%m.%Y").date()
+			except Exception:
+				return None
+
+		def _semester_key(dt: datetime.date):
+			# WS YYYY spans 1.10.YYYY–28/29.02.YYYY+1; SS YYYY spans 1.3.YYYY–30.9.YYYY
+			if not dt:
+				return None
+			if dt.month >= 10 or dt.month <= 2:
+				# Winter semester labeled by its starting year
+				start_year = dt.year if dt.month >= 10 else dt.year - 1
+				return ("WS", start_year)
+			else:
+				# Summer semester labeled by calendar year
+				return ("SS", dt.year)
+
+		def _year_key(dt: datetime.date):
+			# Academic year starts 1.10.
+			if not dt:
+				return None
+			start_year = dt.year if dt.month >= 10 else dt.year - 1
+			return start_year  # represent AY as its starting year
+
+		# First pass: compute per-study aggregations and keep per-row meta by study
+		stats_by_study = {}
+		rows_by_study = {}
+		for g in grades_list:
+			study = g.get("study") or ""
+			study_title = g.get("study_title") or ""
+			dt = _parse_date(g.get("grade_date"))
+			num = _grade_to_numeric(g.get("grade_text"))
+			ects = g.get("ects") or 0.0
+			sem_k = _semester_key(dt)
+			year_k = _year_key(dt)
+			st = stats_by_study.setdefault(study, {
+				"title": study_title,
+				"total_w": 0.0,
+				"total_gw": 0.0,
+				"per_sem": {},
+				"per_year": {},
+			})
+			# track last seen title (if varies slightly)
+			if study_title:
+				st["title"] = study_title
+			rows_by_study.setdefault(study, []).append({
+				"g": g,
+				"sem_k": sem_k,
+				"year_k": year_k,
+			})
+			if num is None or ects is None or ects <= 0:
+				continue
+			st["total_w"] += ects
+			st["total_gw"] += num * ects
+			if sem_k:
+				acc = st["per_sem"].setdefault(sem_k, {"ects": 0.0, "gw": 0.0, "items": []})
+				acc["ects"] += ects
+				acc["gw"] += num * ects
+				acc["items"].append((num, ects))
+			if year_k is not None:
+				accy = st["per_year"].setdefault(year_k, {"ects": 0.0, "gw": 0.0, "items": []})
+				accy["ects"] += ects
+				accy["gw"] += num * ects
+				accy["items"].append((num, ects))
+
+		def _fmt_gpa(ects_sum, gw_sum):
+			if ects_sum and ects_sum > 0:
+				return f"{gw_sum/ects_sum:.2f}"
+			return "n/a"
+
+		# Sort semesters chronologically: by (year, term order with WS before SS of same AY)
+		def _sem_sort_key(k):
+			term, y = k
+			# Order by start date: WS y starts at Oct y; SS y starts Mar y
+			start = datetime.date(y, 10, 1) if term == "WS" else datetime.date(y, 3, 1)
+			return start
+
+		def _best_cap_gpa(items, cap):
+			# items: list of (num_grade, ects) where lower num is better
+			if not items:
+				return "n/a"
+			rem = float(cap)
+			gw = 0.0
+			w = 0.0
+			for num, e in sorted(items, key=lambda x: x[0]):
+				if rem <= 0:
+					break
+				if e <= 0:
+					continue
+				take = e if e <= rem else rem
+				gw += num * take
+				w += take
+				rem -= take
+			if w <= 0:
+				return "n/a"
+			return f"{gw/w:.3f}"
+
+		# Display per-study summaries and per-row ECTS for that study
+		if stats_by_study:
+			print("")
+			print("GPA by Study (ECTS-weighted)")
+			print("-----------------------------")
+			for study in sorted(stats_by_study.keys()):
+				st = stats_by_study[study]
+				study_header = study if not st.get("title") else f"{study} — {st['title']}"
+				print(study_header)
+				print(f"  Total: GPA={_fmt_gpa(st['total_w'], st['total_gw'])}  ECTS={st['total_w']:g}")
+				if st["per_sem"]:
+					print("  Semesters:")
+					for k in sorted(st["per_sem"].keys(), key=_sem_sort_key):
+						acc = st["per_sem"][k]
+						term, y = k
+						label = f"{term} {y}"
+						line = f"    {label}: GPA={_fmt_gpa(acc['ects'], acc['gw'])}  ECTS={acc['ects']:g}"
+						if acc.get('ects', 0.0) > 30 and acc.get('items'):
+							best = _best_cap_gpa(acc['items'], 30)
+							line += f"  (Best30={best})"
+						print(line)
+				if st["per_year"]:
+					print("  Years (AY):")
+					for y in sorted(st["per_year"].keys()):
+						acc = st["per_year"][y]
+						label = f"{y}/{str(y+1)[-2:]}"
+						line = f"    {label}: GPA={_fmt_gpa(acc['ects'], acc['gw'])}  ECTS={acc['ects']:g}"
+						if acc.get('ects', 0.0) > 52 and acc.get('items'):
+							best = _best_cap_gpa(acc['items'], 52)
+							line += f"  (Best52={best})"
+						print(line)
+				print("-----------------------------")
+				
+			return grades_list
