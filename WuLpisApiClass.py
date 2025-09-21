@@ -276,7 +276,7 @@ class WuLpisApi():
 		response = c.request(timeserver, version=3)
 		logger.info("time difference: %.10f (difference is taken into account)" % response.offset)
 
-		offset = 0.8 + response.offset	# seconds before start time when the request should be made
+		offset = 0.9 + response.offset	# seconds before start time when the request should be made
 		logger.info("offset: %.2f" % offset)
 		if self.args.planobject and self.args.course:
 			pp = "S" + self.args.planobject
