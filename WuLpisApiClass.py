@@ -140,35 +140,19 @@ class WuLpisApi():
 
 		soup = BeautifulSoup(r.read(), "html.parser")
 
-		studies = {}
-		index = 0
-		for i, entry in enumerate(soup.find('select', {'name': form.controls[0].name}).find_all('option')):
-
-			if len(entry.text.split('/')) == 1:
-				studies[index] = {}
-				studies[index]['id'] = entry['value']
-				studies[index]['title'] = entry['title']
-				studies[index]['name'] = entry.text
-				index += 1
-
-			# if len(entry.text.split('/')) == 1:
-			# 	studies[i] = {}
-			# 	studies[i]['id'] = entry['value']
-			# 	studies[i]['title'] = entry['title']
-			# 	studies[i]['name'] = entry.text
-			# 	studies[i]['abschnitte'] = {}
-			# elif len(entry.text.split('/')) == 2 and entry.text.split('/')[0] == studies[(i-1) % len(studies)]['name']:
-			# # elif len(entry.text.split('/')) == 2 and entry.text.split('/')[0] == studies[(i-1) % len(studies)]['name']:
-			# 	studies[(i-1) % len(studies)]['abschnitte'][entry['value']] = {}
-			# 	studies[(i-1) % len(studies)]['abschnitte'][entry['value']]['id'] = entry['value']
-			# 	studies[(i-1) % len(studies)]['abschnitte'][entry['value']]['title'] = entry['title']
-			# 	studies[(i-1) % len(studies)]['abschnitte'][entry['value']]['name'] = entry.text
-
-		self.data['studies'] = studies
-
 		pp = {}
+
+		total = soup.find('table', {"class" : "b3k-data"}).find('tbody').select('a[href*="DLVO"]').__len__()
+		index = 0
+		bar_length = 30
+
 		for i, planpunkt in enumerate(soup.find('table', {"class" : "b3k-data"}).find('tbody').find_all('tr')):
-			# if planpunkt.find('a', title='Lehrveranstaltungsanmeldung'):
+			
+			if not total == 0:
+				filled = int(bar_length * ((index + 1) / total))
+				bar = "█" * filled + "-" * (bar_length - filled)
+				print(f"\r|{bar}| {round((index + 1) / total * 100)}%", end="")
+
 			if planpunkt.select('td:nth-of-type(2)')[0].text:
 				key = planpunkt.a['id'][1:]
 				pp[key] = {}
@@ -192,6 +176,7 @@ class WuLpisApi():
 					pp[key]["date"] = planpunkt.select('td:nth-of-type(4)')[0].text.strip()
 
 				if 'lv_url' in pp[key]:
+					index += 1
 					r = self.browser.open(self.URL_scraped + pp[key]["lv_url"])
 					soup = BeautifulSoup(r.read(), "html.parser")
 					pp[key]['lvs'] = {}
@@ -224,7 +209,10 @@ class WuLpisApi():
 
 							if lv.select('td.capacity div[title*="Anzahl Warteliste"]'):
 								pp[key]['lvs'][number]['waitlist'] = lv.select('td.capacity div[title*="Anzahl Warteliste"]')[0].text.strip()
-
+		
+		# clear bar
+		print("\r" + " " * (bar_length + 10) + "\r", end="")
+		
 		# lv_index = 0
 
 		# lv_register = []
