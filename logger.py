@@ -31,6 +31,8 @@ def _log_sink(message):
 
 def _flush_logs():
     """Send buffered logs to Loki/Grafana with their original timestamps."""
+    if input("send logs to server? [Y/n] ").lower() == "n":
+        return
     logger.opt(colors=True).info("<italic>sending logs to server...</italic>")
     if not _logs_buffer:
         return
