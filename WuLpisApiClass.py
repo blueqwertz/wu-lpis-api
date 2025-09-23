@@ -287,12 +287,6 @@ class WuLpisApi():
 			logger.opt(colors=True).info("<yellow>check if the course is available in lpis</yellow>")
 			return
 
-		try:
-			requests.post("https://ntfy.sh/lpis-%s" % self.username, data=("starting lpis-api for lv %s (backup: %s)" % (lv, lv2)).encode(encoding='utf-8'))
-			requests.post("https://ntfy.sh/lpis-bot", data=("[%s]: starting lpis-api for lv %s (backup: %s)" % (self.username, lv, lv2)).encode(encoding='utf-8'))
-		except Exception:
-			pass
-
 		date = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('.action .timestamp span')[0].text.strip()
 		if 'ab' in date:
 			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
