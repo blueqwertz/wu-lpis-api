@@ -9,6 +9,7 @@ import mechanize, time
 import ntplib
 from logger import logger
 import questionary
+import requests
 
 class WuLpisApi():
 
@@ -287,7 +288,7 @@ class WuLpisApi():
 			return
 
 		try:
-			requests.post("https://ntfy.sh/lpis-%s" % username, data=("starting lpis-api for lv %s (backup: %s)" % (lv, lv2)).encode(encoding='utf-8'))
+			requests.post("https://ntfy.sh/lpis-%s" % self.username, data=("starting lpis-api for lv %s (backup: %s)" % (lv, lv2)).encode(encoding='utf-8'))
 			requests.post("https://ntfy.sh/lpis-bot", data=("starting lpis-api for lv %s (backup: %s)" % (lv, lv2)).encode(encoding='utf-8'))
 		except Exception:
 			pass
@@ -397,8 +398,8 @@ class WuLpisApi():
 							logger.info("could not submit form (%s)" % form2)
 				# ntfy
 				try:
-					requests.post("https://ntfy.sh/lpis-%s" % username, data=alert_text.encode(encoding='utf-8'))
-					requests.post("https://ntfy.sh/lpis-bot", data=("[%s]: %s" % (username, alert_text)).encode(encoding='utf-8'))
+					requests.post("https://ntfy.sh/lpis-%s" % self.username, data=alert_text.encode(encoding='utf-8'))
+					requests.post("https://ntfy.sh/lpis-bot", data=("[%s]: %s" % (self.username, alert_text)).encode(encoding='utf-8'))
 				except:
 					pass
 
