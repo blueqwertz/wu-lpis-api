@@ -43,7 +43,7 @@ def download_and_extract_zip():
                 for chunk in response.iter_content(chunk_size=1024):
                     f.write(chunk)
         else:
-            logger.opt(colors=True).info("<red>failed to download the update</red>")
+            logger.opt(colors=True).error("<red>failed to download the update</red>")
             return False
 
         # Extract the ZIP file

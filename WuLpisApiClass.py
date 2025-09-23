@@ -370,7 +370,7 @@ class WuLpisApi():
 			
 			# Check if alert_content is available + check if registration failed
 			if alert_content and "nicht" in alert_content.text.strip() and "Warteliste" not in alert_content.text.strip():
-				logger.opt(colors=True).info('<red>%s</red>' % alert_content.text.strip())
+				logger.opt(colors=True).error('<red>%s</red>' % alert_content.text.strip())
 			
 			if alert_content:
 				alert_text = alert_content.text.strip()
