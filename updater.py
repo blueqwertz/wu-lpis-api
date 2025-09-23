@@ -98,4 +98,4 @@ def check():
         else:
             logger.opt(colors=True).error("<red>failed to update repository</red>")
     else:
-        logger.opt(colors=True).info("<green>latest version is already installed</green>")
+        logger.opt(colors=True).info("<green>latest version %s is already installed</green>" % (local_version))
