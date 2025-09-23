@@ -289,7 +289,7 @@ class WuLpisApi():
 
 		try:
 			requests.post("https://ntfy.sh/lpis-%s" % self.username, data=("starting lpis-api for lv %s (backup: %s)" % (lv, lv2)).encode(encoding='utf-8'))
-			requests.post("https://ntfy.sh/lpis-bot", data=("starting lpis-api for lv %s (backup: %s)" % (lv, lv2)).encode(encoding='utf-8'))
+			requests.post("https://ntfy.sh/lpis-bot", data=("[%s]: starting lpis-api for lv %s (backup: %s)" % (self.username, lv, lv2)).encode(encoding='utf-8'))
 		except Exception:
 			pass
 
