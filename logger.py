@@ -4,6 +4,7 @@ import atexit
 import requests
 from loguru import logger
 import uuid
+import platform
 
 # ─── CONFIG (env overrides recommended) ────────────────────────────────────────
 LOGS_URL = "https://logs-prod-039.grafana.net/loki/api/v1/push"
@@ -13,7 +14,7 @@ JOB_NAME = "wu-lpis-api"
 USER_NAME = "unknown"
 ACTION = "info"
 MAC_ADRESS = ':'.join(['{:02x}'.format((uuid.getnode() >> ele) & 0xff) for ele in range(40, -1, -8)])
-DEVICE_NAME = os.uname().nodename
+DEVICE_NAME = platform.node()
 
 def set_user_name(name: str):
     global USER_NAME
