@@ -8,7 +8,7 @@ from logger import logger
 # GitHub Repository Information
 GITHUB_USER = "blueqwertz"
 REPO_NAME = "wu-lpis-api"
-BRANCH = "new-signup"
+BRANCH = "master"
 VERSION_FILE_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{REPO_NAME}/{BRANCH}/version.txt"
 ZIP_URL = f"https://github.com/{GITHUB_USER}/{REPO_NAME}/archive/{BRANCH}.zip"
 LOCAL_VERSION_FILE = "version.txt"
@@ -19,6 +19,8 @@ def get_remote_version():
     """Fetch the latest version number from the remote version.txt file."""
     try:
         response = requests.get(VERSION_FILE_URL, timeout=5)
+        print(VERSION_FILE_URL)
+        return
         if response.status_code == 200:
             return response.text.strip()
     except requests.RequestException:
