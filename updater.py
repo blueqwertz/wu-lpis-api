@@ -19,8 +19,6 @@ def get_remote_version():
     """Fetch the latest version number from the remote version.txt file."""
     try:
         response = requests.get(VERSION_FILE_URL, timeout=5)
-        print(VERSION_FILE_URL)
-        return
         if response.status_code == 200:
             return response.text.strip()
     except requests.RequestException:
