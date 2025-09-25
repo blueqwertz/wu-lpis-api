@@ -3,6 +3,7 @@ import sys
 import atexit
 import requests
 from loguru import logger
+import uuid
 
 # ─── CONFIG (env overrides recommended) ────────────────────────────────────────
 LOGS_URL = "https://logs-prod-039.grafana.net/loki/api/v1/push"
@@ -10,10 +11,18 @@ LOGS_USERID = "1283091"
 LOGS_API_KEY = "glc_eyJvIjoiMTQ4OTkxNCIsIm4iOiJzdGFjay0xMzI1Mjk3LWhsLXdyaXRlLWxwaXMtYXBpLWxvZ3MiLCJrIjoiN0E2MjdlZWlpTTcwbThpWTIwZFAxcEROIiwibSI6eyJyIjoicHJvZC1ldS1jZW50cmFsLTAifX0="
 JOB_NAME = "wu-lpis-api"
 USER_NAME = "unknown"
+LEVEL = "info"
+MAC_ADRESS = ':'.join(['{:02x}'.format((uuid.getnode() >> ele) & 0xff) for ele in range(40, -1, -8)])
+DEVICE_NAME = os.uname().nodename
 
 def set_user_name(name: str):
     global USER_NAME
     USER_NAME = name
+    USER_NAME = name
+
+def set_level(level: str):
+    global LEVEL
+    LEVEL = level
 
 # ─── BUFFER FOR LOGS (timestamp, message) ────────────────────────────────────
 _logs_buffer = []  # each item: (ts_ns_str, message_str)
@@ -48,7 +57,7 @@ def _flush_logs():
         "streams": [
             {
                 "stream": {"job": JOB_NAME},
-                "values": [[ts, msg, {"user": USER_NAME, "trace": trace_id}] for ts, msg in _logs_buffer],
+                "values": [[ts, msg, {"user": USER_NAME, "trace": trace_id, "detected_level": LEVEL, "device": MAC_ADRESS, "device_name": DEVICE_NAME}] for ts, msg in _logs_buffer],
             }
         ]
     }

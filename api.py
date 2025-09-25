@@ -2,7 +2,7 @@ try:
 	import argparse
 	import traceback
 	from WuLpisApiClass import WuLpisApi
-	from logger import logger, set_user_name
+	from logger import logger, set_user_name, set_level
 	import updater
 except ImportError as e:
 	# install the missing modules
@@ -43,6 +43,7 @@ if __name__ == '__main__':
 
 	logger.add("logs/output-%s.log" % username, level="INFO", colorize=False)
 	set_user_name(username)
+	set_level(args.action)
 	
 	if args.credfile and "sectionpoint" in file_parser(args.credfile) and not args.sectionpoint:
 		args.sectionpoint = file_parser(args.credfile)["sectionpoint"]

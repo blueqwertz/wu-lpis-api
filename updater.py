@@ -8,7 +8,7 @@ from logger import logger
 # GitHub Repository Information
 GITHUB_USER = "blueqwertz"
 REPO_NAME = "wu-lpis-api"
-BRANCH = "master"
+BRANCH = "new-signup"
 VERSION_FILE_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{REPO_NAME}/{BRANCH}/version.txt"
 ZIP_URL = f"https://github.com/{GITHUB_USER}/{REPO_NAME}/archive/{BRANCH}.zip"
 LOCAL_VERSION_FILE = "version.txt"
