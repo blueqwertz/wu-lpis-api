@@ -11,7 +11,7 @@ LOGS_USERID = "1283091"
 LOGS_API_KEY = "glc_eyJvIjoiMTQ4OTkxNCIsIm4iOiJzdGFjay0xMzI1Mjk3LWhsLXdyaXRlLWxwaXMtYXBpLWxvZ3MiLCJrIjoiN0E2MjdlZWlpTTcwbThpWTIwZFAxcEROIiwibSI6eyJyIjoicHJvZC1ldS1jZW50cmFsLTAifX0="
 JOB_NAME = "wu-lpis-api"
 USER_NAME = "unknown"
-LEVEL = "info"
+ACTION = "info"
 MAC_ADRESS = ':'.join(['{:02x}'.format((uuid.getnode() >> ele) & 0xff) for ele in range(40, -1, -8)])
 DEVICE_NAME = os.uname().nodename
 
@@ -20,9 +20,9 @@ def set_user_name(name: str):
     USER_NAME = name
     USER_NAME = name
 
-def set_level(level: str):
-    global LEVEL
-    LEVEL = level
+def set_action(level: str):
+    global ACTION
+    ACTION = level
 
 # ─── BUFFER FOR LOGS (timestamp, message) ────────────────────────────────────
 _logs_buffer = []  # each item: (ts_ns_str, message_str)
@@ -31,11 +31,8 @@ _logs_buffer = []  # each item: (ts_ns_str, message_str)
 def _log_sink(message):
     """Collect each log with its original timestamp (ns) and raw message."""
     rec = message.record  # dict with loguru metadata
-    # rec["time"] is a timezone-aware datetime; convert to nanoseconds epoch
-    ts_ns = str(int(rec["time"].timestamp() * 1_000_000_000))
-    # Use the unformatted message text to avoid duplicates of time/level
-    text = rec["message"]
-    _logs_buffer.append((ts_ns, text))
+
+    _logs_buffer.append((str(int(rec["time"].timestamp() * 1_000_000_000)), rec["message"], rec["level"].name.lower()))
 
 
 def _flush_logs():
@@ -57,7 +54,7 @@ def _flush_logs():
         "streams": [
             {
                 "stream": {"job": JOB_NAME},
-                "values": [[ts, msg, {"user": USER_NAME, "trace": trace_id, "detected_level": LEVEL, "device": MAC_ADRESS, "device_name": DEVICE_NAME}] for ts, msg in _logs_buffer],
+                "values": [[ts, msg, {"user": USER_NAME, "trace": trace_id, "action": ACTION, "device": MAC_ADRESS, "device_name": DEVICE_NAME, "detected_level": level}] for ts, msg, level in _logs_buffer],
             }
         ]
     }
