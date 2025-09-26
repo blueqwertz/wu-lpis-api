@@ -4,7 +4,6 @@
 import datetime, re, os, time, pickle, sys
 from lxml import html
 from bs4 import BeautifulSoup
-import logging
 import mechanize, time
 import ntplib
 from logger import logger
