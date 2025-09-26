@@ -19,7 +19,6 @@ DEVICE_NAME = platform.node()
 def set_user_name(name: str):
     global USER_NAME
     USER_NAME = name
-    USER_NAME = name
 
 def set_action(level: str):
     global ACTION
