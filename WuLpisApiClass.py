@@ -340,12 +340,18 @@ class WuLpisApi():
 
 		# build raw mechanize Request objects ahead of time
 		self.browser.select_form(form1)
-		req1 = self.browser.click()  # ready-to-send POST for primary LV
+		req1 = None
+		if not form1.startswith("WLDEL"):
+			req1 = self.browser.click()  # ready-to-send POST for primary LV
 
 		req2 = None
 		if lv2 and form2 and not form2.startswith("WLDEL"):
 			self.browser.select_form(form2)
 			req2 = self.browser.click()  # ready-to-send POST for secondary LV
+
+		if not req1 and not req2:
+			logger.opt(colors=True).info("already registered for both LVs — no action taken")
+			return
 
 		logger.opt(colors=True).info("<green>registration window assumed open — sending POST request</green>")
 
@@ -367,14 +373,18 @@ class WuLpisApi():
 				}
 				
 				for (k, v) in _data.items():
+					if _params.get(k):
+						if k == "cmd" and _params[k] == "eintragen":
+							continue
+						if k == "RA" and _params[k] == "wladd":
+							continue
 					_params[k] = v
 				
 				_request.set_data("&".join(f"{k}={v}" for k, v in _params.items()))
 
-				# print url and all data of the request for debugging
-				logger.opt(colors=True).info("DEBUG %s %s" % (_request.get_full_url(),_request.get_data()))
-
 				starttime = time.time_ns()
+				logger.opt(colors=True).info("<green>start request %s</green>" % datetime.datetime.now())
+				logger.opt(colors=True).info("fetching: %s %s %s" % (_request.get_method(), _request.get_full_url(),_request.get_data()))
 				_response = self.browser.open(_request)
 				logger.opt(colors=True).info("<green>end request %s</green>" % datetime.datetime.now())
 				logger.info(f"request time {(time.time_ns() - starttime) / 1000000000}s")
@@ -395,10 +405,16 @@ class WuLpisApi():
 				continue
 
 			# consider it a failure if there's an alert with a negative message not related to waitlist
-			if bool(alert_content and ("nicht" in alert_content.text.strip()) and ("Warteliste" not in alert_content.text.strip())) and req2 is not None:
+			if bool(alert_content and ("nicht" in alert_content.text.strip())) and req2 is not None:
 				logger.opt(colors=True).info("<yellow>primary submission failed — trying secondary LV immediately</yellow>")
 				soup = _submit_and_parse(req2, form2, lv2)
 				alert_content = soup.find('div', {"class": 'b3k_alert_content'})
 				if alert_content:
-					logger.opt(colors=True).info("<bold>" + alert_content.text.strip() + "</bold>")			
+					logger.opt(colors=True).info("<bold>" + alert_content.text.strip() + "</bold>")	
+			elif bool(alert_content and ("Warteliste" in alert_content.text.strip())) and req2 is not None:
+				logger.opt(colors=True).info("<yellow>on waitlist — trying secondary LV</yellow>")
+				soup = _submit_and_parse(req2, form2, lv2)
+				alert_content = soup.find('div', {"class": 'b3k_alert_content'})
+				if alert_content:
+					logger.opt(colors=True).info("<bold>" + alert_content.text.strip() + "</bold>")
 			break
