@@ -7,4 +7,4 @@ logs/*
 __pychache__/
 analyser.py
 url.txt
-index.html
+creds/
