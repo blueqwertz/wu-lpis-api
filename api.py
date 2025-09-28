@@ -39,6 +39,11 @@ if __name__ == '__main__':
 	#   (mixing is allowed; inputs are combined)
 	#   -lv2/--course2 is deprecated (use pairs above)
 	# --- Normalize PP–LV inputs into args.pairs ---------------------------------
+
+	# if course2 is set, provide information that it is deprecated by raising an error
+	if args.course2:
+		raise SystemExit("Error: -lv2/--course2 is deprecated. Use -pp/-lv pairs (repeatable) or --pair PP:LV (repeatable) instead. (example: --pair 342886:1052 OR -pp 342886 -lv 1052 -pp 2284 -lv 7777)")
+
 	pairs = []
 
 	# 2a) Pairs from --pair "PP:LV" strings
