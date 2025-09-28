@@ -26,10 +26,54 @@ if __name__ == '__main__':
 	parser.add_argument('-u', '--username')
 	parser.add_argument('-s', '--sessiondir', help='Dir where the sessions should be stored')
 	parser.add_argument('-sp', '--sectionpoint', help='Study section inw which the planobject can be found (Studium/Abschnitt)')
-	parser.add_argument('-pp', '--planobject', help="Study plan object in which the correspondending course can be found (Studienplanpunkt")
-	parser.add_argument('-lv', '--course', help="Course ID for which the registration should be done")
-	parser.add_argument('-lv2', '--course2', help="Fallback (second) Course ID")
+	parser.add_argument('-pp', '--planobject', action='append', help="Study plan object (Studienplanpunkt). Repeatable: -pp 342886 -pp 2284", required=False)
+	parser.add_argument('-lv', '--course', action='append', help="Course ID. Repeatable and order-coupled with -pp.", required=False)
+	parser.add_argument('-lv2', '--course2', help="Fallback (second) Course ID (deprecated; use -pp/-lv pairs or --pair)")
+	parser.add_argument('-pr', '--pair', action='append', help="Convenience: PP:LV pair, e.g. --pair 342886:1052. Repeatable.", required=False)
 	args=parser.parse_args()
+
+	# --- PP–LV pair normalization for flexible input ---------------------------------
+	# Examples:
+	#   python3 api.py -a registration -pp 342886 -lv 1052 -pp 2284 -lv 7777
+	#   python3 api.py -a registration --pair 342886:1052 --pair 2284:7777
+	#   (mixing is allowed; inputs are combined)
+	#   -lv2/--course2 is deprecated (use pairs above)
+	# --- Normalize PP–LV inputs into args.pairs ---------------------------------
+	pairs = []
+
+	# 2a) Pairs from --pair "PP:LV" strings
+	if args.pair:
+		for item in args.pair:
+			if ':' not in item:
+				raise SystemExit(f"Invalid --pair '{item}'. Use format PP:LV (e.g., 342886:1052)")
+			pp, lv = item.split(':', 1)
+			pp = pp.strip()
+			lv = lv.strip()
+			if not pp or not lv:
+				raise SystemExit(f"Invalid --pair '{item}'. Both PP and LV must be non-empty.")
+			pairs.append((pp, lv))
+
+	# 2b) Pairs from repeated -pp/-lv; require equal lengths when either provided
+	pp_list = args.planobject or []
+	lv_list = args.course or []
+	if pp_list or lv_list:
+		if len(pp_list) != len(lv_list):
+			raise SystemExit(
+				f"Mismatched counts: received {len(pp_list)} '-pp' and {len(lv_list)} '-lv'.\n"
+				"Provide the same number of -pp and -lv arguments in the intended order,\n"
+				"or use repeated --pair PP:LV entries."
+			)
+		pairs.extend(zip(pp_list, lv_list))
+
+	# Attach normalized structure for downstream code
+	setattr(args, 'pairs', pairs)
+
+	# Backward compatibility: if exactly one pair via -pp/-lv and no --pair given,
+	# keep args.planobject/args.course as scalars for legacy code paths.
+	if not args.pair and len(pp_list) == 1 and len(lv_list) == 1:
+		args.planobject = pp_list[0]
+		args.course = lv_list[0]
+	# Otherwise, leave args.planobject/args.course as lists (new behavior).
 
 	username = file_parser(args.credfile)["username"] if args.credfile else args.username
 	password = file_parser(args.credfile)["password"] if args.credfile else args.password
