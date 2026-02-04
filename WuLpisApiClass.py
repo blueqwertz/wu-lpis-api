@@ -197,7 +197,7 @@ class WuLpisApi():
 							if lv.select('td.action form'):
 								internal_id = lv.select('td.action form')[0]['name']
 								pp[key]['lvs'][number]['internal_id'] = internal_id.rsplit('_')[1]
-							date = lv.select('td.action .timestamp span')[0].text.strip()
+							date = e.text.strip() if (e := lv.select_one('td.action .timestamp span')) else None
 							
 							if 'ab' in date:
 								pp[key]['lvs'][number]['date_start'] = date[3:]
