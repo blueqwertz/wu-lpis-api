@@ -147,68 +147,73 @@ class WuLpisApi():
 		bar_length = 30
 
 		for i, planpunkt in enumerate(soup.find('table', {"class" : "b3k-data"}).find('tbody').find_all('tr')):
-			
-			if not total == 0:
-				filled = int(bar_length * ((index + 1) / total))
-				bar = "█" * filled + "-" * (bar_length - filled)
-				print(f"\r|{bar}| {round((index + 1) / total * 100)}%", end="")
+			try:
+				if not total == 0:
+					filled = int(bar_length * ((index + 1) / total))
+					bar = "█" * filled + "-" * (bar_length - filled)
+					print(f"\r|{bar}| {round((index + 1) / total * 100)}%", end="")
 
-			if planpunkt.select('td:nth-of-type(2)')[0].text:
-				key = planpunkt.a['id'][1:]
-				pp[key] = {}
-				pp[key]["order"] = i + 1
-				pp[key]["depth"] = int(re.findall('\\d+', planpunkt.select('td:nth-of-type(1)')[0]['style'])[0]) / 16
-				pp[key]["id"] = key
-				pp[key]["type"] = planpunkt.select('td:nth-of-type(1) span:nth-of-type(1)')[0].text.strip()
-				pp[key]["name"] = planpunkt.select('td:nth-of-type(1) span:nth-of-type(2)')[0].text.strip()
-				
-				if planpunkt.select('a[href*="DLVO"]'):
-					pp[key]["lv_url"] = planpunkt.select('a[href*="DLVO"]')[0]['href']
-					pp[key]["lv_status"] = planpunkt.select('a[href*="DLVO"]')[0].text.strip()
+				if planpunkt.select('td:nth-of-type(2)')[0].text:
+					key = planpunkt.a['id'][1:]
+					pp[key] = {}
+					pp[key]["order"] = i + 1
+					pp[key]["depth"] = int(re.findall('\\d+', planpunkt.select('td:nth-of-type(1)')[0]['style'])[0]) / 16
+					pp[key]["id"] = key
+					pp[key]["type"] = planpunkt.select('td:nth-of-type(1) span:nth-of-type(1)')[0].text.strip()
+					pp[key]["name"] = planpunkt.select('td:nth-of-type(1) span:nth-of-type(2)')[0].text.strip()
+					
+					if planpunkt.select('a[href*="DLVO"]'):
+						pp[key]["lv_url"] = planpunkt.select('a[href*="DLVO"]')[0]['href']
+						pp[key]["lv_status"] = planpunkt.select('a[href*="DLVO"]')[0].text.strip()
 
-				if '/' in planpunkt.select('td:nth-of-type(2)')[0].text:
-					pp[key]["attempts"] = planpunkt.select('td:nth-of-type(2) span:nth-of-type(1)')[0].text.strip()
-					pp[key]["attempts_max"] = planpunkt.select('td:nth-of-type(2) span:nth-of-type(2)')[0].text.strip()
+					if '/' in planpunkt.select('td:nth-of-type(2)')[0].text:
+						pp[key]["attempts"] = planpunkt.select('td:nth-of-type(2) span:nth-of-type(1)')[0].text.strip()
+						pp[key]["attempts_max"] = planpunkt.select('td:nth-of-type(2) span:nth-of-type(2)')[0].text.strip()
 
-				if planpunkt.select('td:nth-of-type(3)')[0].text.strip():
-					pp[key]["result"] = planpunkt.select('td:nth-of-type(3)')[0].text.strip()
-				if planpunkt.select('td:nth-of-type(4)')[0].text.strip():
-					pp[key]["date"] = planpunkt.select('td:nth-of-type(4)')[0].text.strip()
+					if planpunkt.select('td:nth-of-type(3)')[0].text.strip():
+						pp[key]["result"] = planpunkt.select('td:nth-of-type(3)')[0].text.strip()
+					if planpunkt.select('td:nth-of-type(4)')[0].text.strip():
+						pp[key]["date"] = planpunkt.select('td:nth-of-type(4)')[0].text.strip()
 
-				if 'lv_url' in pp[key]:
-					index += 1
-					r = self.browser.open(self.URL_scraped + pp[key]["lv_url"])
-					soup = BeautifulSoup(r.read(), "html.parser")
-					pp[key]['lvs'] = {}
+					if 'lv_url' in pp[key]:
+						index += 1
+						r = self.browser.open(self.URL_scraped + pp[key]["lv_url"])
+						soup = BeautifulSoup(r.read(), "html.parser")
+						pp[key]['lvs'] = {}
 
-					if soup.find('table', {"class" : "b3k-data"}):
-						for lv in soup.find('table', {"class" : "b3k-data"}).find('tbody').find_all('tr'):
-							number = lv.select('.ver_id a')[0].text.strip()
-							pp[key]['lvs'][number] = {}
-							pp[key]['lvs'][number]['id'] = number
-							pp[key]['lvs'][number]['semester'] = lv.select('.ver_id span')[0].text.strip()
-							pp[key]['lvs'][number]['prof'] = lv.select('.ver_title div')[0].text.strip()
-							pp[key]['lvs'][number]['name'] = lv.find('td', {"class" : "ver_title"}).findAll(text=True, recursive=False)[1].strip()
-							pp[key]['lvs'][number]['status'] = lv.select('td.box div')[0].text.strip()
-							capacity = lv.select('div[class*="capacity_entry"]')[0].text.strip()
-							pp[key]['lvs'][number]['free'] = capacity[:capacity.rindex('/')-1]
-							pp[key]['lvs'][number]['capacity'] = capacity[capacity.rindex('/')+2:]
-							
-							if lv.select('td.action form'):
-								internal_id = lv.select('td.action form')[0]['name']
-								pp[key]['lvs'][number]['internal_id'] = internal_id.rsplit('_')[1]
-							date = e.text.strip() if (e := lv.select_one('td.action .timestamp span')) else None
-							
-							if 'ab' in date:
-								pp[key]['lvs'][number]['date_start'] = date[3:]
-							if 'bis' in date:
-								pp[key]['lvs'][number]['date_end'] = date[4:]
+						if soup.find('table', {"class" : "b3k-data"}):
+							for lv in soup.find('table', {"class" : "b3k-data"}).find('tbody').find_all('tr'):
+								try:
+									number = lv.select('.ver_id a')[0].text.strip()
+									pp[key]['lvs'][number] = {}
+									pp[key]['lvs'][number]['id'] = number
+									pp[key]['lvs'][number]['semester'] = lv.select('.ver_id span')[0].text.strip()
+									pp[key]['lvs'][number]['prof'] = lv.select('.ver_title div')[0].text.strip()
+									pp[key]['lvs'][number]['name'] = lv.find('td', {"class" : "ver_title"}).findAll(text=True, recursive=False)[1].strip()
+									pp[key]['lvs'][number]['status'] = lv.select('td.box div')[0].text.strip()
+									capacity = lv.select('div[class*="capacity_entry"]')[0].text.strip()
+									pp[key]['lvs'][number]['free'] = capacity[:capacity.rindex('/')-1]
+									pp[key]['lvs'][number]['capacity'] = capacity[capacity.rindex('/')+2:]
+									
+									if lv.select('td.action form'):
+										internal_id = lv.select('td.action form')[0]['name']
+										pp[key]['lvs'][number]['internal_id'] = internal_id.rsplit('_')[1]
+									date = e.text.strip() if (e := lv.select_one('td.action .timestamp span')) else None
+									
+									if 'ab' in date:
+										pp[key]['lvs'][number]['date_start'] = date[3:]
+									if 'bis' in date:
+										pp[key]['lvs'][number]['date_end'] = date[4:]
 
-							if lv.select('td.box.active'):
-								pp[key]['lvs'][number]['registerd_at'] = lv.select('td.box.active .timestamp span')[0].text.strip()
+									if lv.select('td.box.active'):
+										pp[key]['lvs'][number]['registerd_at'] = lv.select('td.box.active .timestamp span')[0].text.strip()
 
-							if lv.select('td.capacity div[title*="Anzahl Warteliste"]'):
-								pp[key]['lvs'][number]['waitlist'] = lv.select('td.capacity div[title*="Anzahl Warteliste"]')[0].text.strip()
+									if lv.select('td.capacity div[title*="Anzahl Warteliste"]'):
+										pp[key]['lvs'][number]['waitlist'] = lv.select('td.capacity div[title*="Anzahl Warteliste"]')[0].text.strip()
+								except Exception:
+									continue
+			except Exception as e:
+				logger.opt(colors=True).error("Error parsing planpunkt: %s" % str(e))
 		
 		# clear bar
 		print("\r" + " " * (bar_length + 10) + "\r", end="")
