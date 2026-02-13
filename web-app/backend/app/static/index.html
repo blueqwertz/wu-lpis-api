@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>LPIS Web App</title>
+    <style>
+      body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; }
+      input { margin: 4px 0; width: 300px; }
+      pre { background: #111; color: #0f0; padding: 12px; min-height: 180px; overflow: auto; }
+      .row { margin-bottom: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>Signup Job Runner</h1>
+    <p>Create a background signup task, then rejoin anytime with the Job ID.</p>
+
+    <div class="row"><label>Username<br><input id="username" value="h1234567" /></label></div>
+    <div class="row"><label>Primary Course<br><input id="primary_course" value="1234" /></label></div>
+    <div class="row"><label>Fallback Course<br><input id="fallback_course" value="5678" /></label></div>
+    <button id="create">Create Job</button>
+
+    <hr />
+    <div class="row"><label>Job ID<br><input id="job_id" /></label></div>
+    <button id="rejoin">Rejoin Job</button>
+    <h3>Status: <span id="status">-</span></h3>
+    <pre id="logs"></pre>
+
+    <script>
+      const logsEl = document.getElementById('logs');
+      const statusEl = document.getElementById('status');
+      let source = null;
+
+      function appendLog(line) {
+        logsEl.textContent += `[${line.level}] ${line.message}\n`;
+        logsEl.scrollTop = logsEl.scrollHeight;
+      }
+
+      async function fetchStatus(jobId) {
+        const res = await fetch(`/api/jobs/${jobId}`);
+        if (!res.ok) throw new Error('Job not found');
+        const data = await res.json();
+        statusEl.textContent = data.status;
+      }
+
+      async function fetchHistory(jobId) {
+        logsEl.textContent = '';
+        const res = await fetch(`/api/jobs/${jobId}/logs`);
+        if (!res.ok) throw new Error('Logs not found');
+        const lines = await res.json();
+        lines.forEach(appendLog);
+      }
+
+      function openStream(jobId) {
+        if (source) source.close();
+        source = new EventSource(`/api/jobs/${jobId}/logs/stream`);
+        source.onmessage = (event) => {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'log') appendLog(msg.payload);
+          if (msg.type === 'status') statusEl.textContent = msg.payload.status;
+        };
+      }
+
+      async function rejoin(jobId) {
+        document.getElementById('job_id').value = jobId;
+        await fetchStatus(jobId);
+        await fetchHistory(jobId);
+        openStream(jobId);
+      }
+
+      document.getElementById('create').onclick = async () => {
+        const payload = {
+          username: document.getElementById('username').value,
+          primary_course: document.getElementById('primary_course').value,
+          fallback_course: document.getElementById('fallback_course').value || null,
+          offset_seconds: 0.7
+        };
+
+        const res = await fetch('/api/jobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        await rejoin(data.job_id);
+      };
+
+      document.getElementById('rejoin').onclick = async () => {
+        const jobId = document.getElementById('job_id').value.trim();
+        if (jobId) await rejoin(jobId);
+      };
+    </script>
+  </body>
+</html>
