@@ -6,3 +6,5 @@ creds/
 .DS_STORE
 logs/*
 __pycache__/
+sessions/
+.tmp/

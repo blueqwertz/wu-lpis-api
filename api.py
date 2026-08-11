@@ -1,5 +1,6 @@
 try:
 	import argparse
+	import os
 	import traceback
 	from WuLpisApiClass import WuLpisApi
 	from logger import logger, set_user_name, set_action
@@ -37,17 +38,36 @@ if __name__ == '__main__':
 	parser.add_argument('-lv', '--course', help="Course ID for which the registration should be done")
 	parser.add_argument('-lv2', '--course2', help="Fallback (second) Course ID")
 	parser.add_argument('-o', '--offset', help="Offset in seconds for the time of registration", type=float, default=0.7)
+	parser.add_argument('-d', '--msdomain', help="Domain appended to the username for the Microsoft login", default="s.wu.ac.at")
+	parser.add_argument('-m', '--mfa-method', dest='mfa_method', help="Microsoft 2FA method (e.g. PhoneAppNotification, PhoneAppOTP, OneWaySMS)")
 	args=parser.parse_args()
 
-	username = file_parser(args.credfile)["username"] if args.credfile else args.username
-	password = file_parser(args.credfile)["password"] if args.credfile else args.password
+	# the credentials file is optional: it is only read when it exists, and
+	# values given on the command line always win
+	credentials = {}
+	if args.credfile and os.path.isfile(args.credfile):
+		credentials = file_parser(args.credfile)
+	elif args.credfile and not (args.username or args.password):
+		parser.error("credentials file '%s' not found - "
+					 "provide it or use --username/--password" % args.credfile)
+
+	username = args.username or credentials.get("username")
+	password = args.password or credentials.get("password")
+
+	if not username:
+		parser.error("no username given (--username or credentials file)")
+
+	if "msdomain" in credentials and args.msdomain == parser.get_default("msdomain"):
+		args.msdomain = credentials["msdomain"]
+	if "mfa_method" in credentials and not args.mfa_method:
+		args.mfa_method = credentials["mfa_method"]
 
 	logger.add("logs/output-%s.log" % username, level="INFO", colorize=False)
 	set_user_name(username)
 	set_action(args.action)
-	
-	if args.credfile and "sectionpoint" in file_parser(args.credfile) and not args.sectionpoint:
-		args.sectionpoint = file_parser(args.credfile)["sectionpoint"]
+
+	if "sectionpoint" in credentials and not args.sectionpoint:
+		args.sectionpoint = credentials["sectionpoint"]
 	try:
 		api = WuLpisApi(username, password, args, args.sessiondir)
 		method = getattr(api, args.action, None)

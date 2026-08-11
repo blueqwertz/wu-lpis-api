@@ -10,6 +10,25 @@ from logger import logger
 import questionary
 import requests
 
+from ms_login import LpisSSOSession, USER_AGENT
+
+
+def ask_select(message, choices):
+	"""Ask the user to pick one of choices, or return None without a terminal.
+
+	Without a tty (cron, pipes, background runs) questionary cannot render its
+	prompt and blows up in prompt_toolkit, so the question is skipped and the
+	caller falls back to its default.
+	"""
+	if not (sys.stdin.isatty() and sys.stdout.isatty()):
+		return None
+	try:
+		return questionary.select(message, choices=choices).ask()
+	except Exception as error:
+		logger.warning("could not show the selection prompt: %s" % error)
+		return None
+
+
 class WuLpisApi():
 
 	URL = "https://lpis.wu.ac.at/lpis"
@@ -28,6 +47,14 @@ class WuLpisApi():
 		else:
 			self.sessionfile = "sessions/" + username
 
+		self.sso = LpisSSOSession(
+			username=username,
+			password=password,
+			sessionfile=self.sessionfile,
+			ms_domain=getattr(args, "msdomain", None) or "s.wu.ac.at",
+			mfa_method=getattr(args, "mfa_method", None),
+		)
+
 		self.browser.set_handle_robots(False)   # ignore robots
 		self.browser.set_handle_refresh(False)  # can sometimes hang without this
 		self.browser.set_handle_equiv(True)
@@ -36,8 +63,11 @@ class WuLpisApi():
 		self.browser.set_debug_http(False)
 		self.browser.set_debug_responses(False)
 		self.browser.set_debug_redirects(True)
+		# share the cookie jar with the requests session used for the SSO login,
+		# so mechanize keeps browsing with the session established there
+		self.browser.set_cookiejar(self.sso.session.cookies)
 		self.browser.addheaders = [
-			('User-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/68.0.3440.106 Safari/537.36'),
+			('User-agent', USER_AGENT),
 			('Accept', '*/*')
 		]
 		self.login()
@@ -47,28 +77,33 @@ class WuLpisApi():
 		logger.info("init time: %s" % starttime)
 		self.data = {}
 
-		#if not self.load_session():
 		logger.info("logging in %s..." % self.username)
 
-		r = self.browser.open(self.URL)
-		self.browser.select_form('login')
+		# LPIS itself has no login form anymore: the whole chain runs over
+		# Keycloak (bach-id.wu.ac.at) and Microsoft Entra ID incl. 2FA.
+		response = self.sso.login()
 
-		tree = html.fromstring(r.read()) # removes comments from html
-		input_username = list(set(tree.xpath("//input[@accesskey='u']/@name")))[0]
-		input_password = list(set(tree.xpath("//input[@accesskey='p']/@name")))[0]
-
-		self.browser[input_username] = self.username
-		self.browser[input_password] = self.password
-		r = self.browser.submit()
-
-		# get scraped LPIS url 
+		# get scraped LPIS url
 		# looks like: https://lpis.wu.ac.at/kdcs/bach-s##/#####/
-		url = r.geturl()
-
+		url = response.url
 		self.URL_scraped = url[:url.rindex('/')+1]
 
+		# hand the already fetched page over to mechanize so the following
+		# form handling works exactly as before
+		# requests already decoded the body, so the transfer related headers
+		# must not be passed on
+		skip = ("content-encoding", "content-length", "transfer-encoding")
+		headers = [(name, value) for name, value in response.headers.items()
+				   if name.lower() not in skip]
+		self.browser.set_response(mechanize.make_response(
+			response.content, headers, url,
+			response.status_code, response.reason or "OK",
+		))
+
 		self.data = self.URL_scraped
-		#self.save_session()
+
+		if self.sso.used_stored_session and not self.sso.did_interactive_login:
+			logger.info("reused stored session (no password/2FA needed)")
 
 		logger.info(f"request time {(time.time_ns() - starttime) / 1000000000}s")
 
@@ -86,32 +121,18 @@ class WuLpisApi():
 
 
 	def save_session(self):
-		# logger.info "trying to save session ..."
-		if not os.path.exists(os.path.dirname(self.sessionfile)):
-			try:
-				os.makedirs(os.path.dirname(self.sessionfile))
-			except:
-				raise
-		with open(self.sessionfile, 'wb') as file:
-			try:
-				# dill.dump(self.browser, file)
-				pickle.dump(self.browser, file, pickle.HIGHEST_PROTOCOL)
-			except:
-				return False
-		# logger.info "session saved to file ..."
-		return True
+		"""Persist the SSO cookies so password and 2FA are only needed once."""
+		return self.sso.save_session()
 
 
 	def load_session(self):
-		# logger.info "trying to load session ..."
-		if os.path.isfile(self.sessionfile):
-			with open(self.sessionfile, 'rb') as file:
-				try:
-					self.browser = pickle.load(file)
-				except:
-					return False
-			# logger.info "session loaded from file ..."
-			return True
+		return self.sso.load_session()
+
+
+	def logout(self):
+		"""Drop the stored session, the next login asks for password and 2FA again."""
+		self.sso.clear_session()
+		logger.info("stored session removed")
 
 
 	def infos(self):
@@ -125,7 +146,9 @@ class WuLpisApi():
 		sectionpoints = [{"name": x.get_labels()[0].text.strip() if x.get_labels() else '', "value": x.name} for x in form.find_control(form.controls[0].name).get_items() if not x.attrs.get('id') == "abgewaehlt"]
 
 		if not self.args.sectionpoint:
-			self.args.sectionpoint = questionary.select("select sectionpoint (enter):",choices=sectionpoints).ask()
+			self.args.sectionpoint = ask_select("select sectionpoint (enter):", sectionpoints)
+			if not self.args.sectionpoint:
+				logger.info("no sectionpoint selected, using the first one")
 
 		# Select first element in Select Options Dropdown
 		item = form.find_control(form.controls[0].name).get(self.args.sectionpoint) if self.args.sectionpoint else form.find_control(form.controls[0].name).get(None ,None, None, 0)
