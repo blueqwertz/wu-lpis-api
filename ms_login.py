@@ -285,16 +285,47 @@ def _select(message, choices):
     return choices[int(_prompt("number:")) - 1]
 
 
+class TerminalUI():
+    """How the login talks to the user.
+
+    Everything interactive goes through this object, so a frontend without a
+    terminal can hand in its own implementation instead of having to replace
+    the functions of this module.
+    """
+
+    def text(self, message):
+        """Ask for a value the user has to read somewhere (a 2FA code)."""
+        return _prompt(message)
+
+    def select(self, message, choices):
+        """Let the user pick one of several 2FA methods."""
+        return _select(message, choices)
+
+    def show_number(self, number):
+        """Show the number matching value while the phone is asked."""
+        logger.opt(colors=True).info(
+            "<bold><yellow>Zahl in der Authenticator-App eingeben: %s</yellow></bold>"
+            % number)
+        _print_box("Authenticator-App:  %-11s" % number)
+
+    def hide_number(self):
+        """The approval is over - the number is not needed anymore."""
+
+    def waiting(self):
+        logger.info("waiting for approval in the Authenticator app ...")
+
+
 class LpisSSOSession():
     """Drives the LPIS -> Keycloak -> Microsoft login and stores the cookies."""
 
     def __init__(self, username, password=None, sessionfile=None,
-                 ms_domain="s.wu.ac.at", mfa_method=None):
+                 ms_domain="s.wu.ac.at", mfa_method=None, ui=None):
         self.username = username
         self.password = password
         self.sessionfile = sessionfile
         self.ms_domain = ms_domain
         self.mfa_method = mfa_method
+        self.ui = ui or TerminalUI()
 
         self.session = requests.Session()
         self.session.headers.update({
@@ -703,7 +734,9 @@ class LpisSSOSession():
 
         labels = ["%s (%s)" % (proof.get("authMethodId"), proof.get("display", ""))
                   for proof in proofs]
-        chosen = _select("2FA-Methode waehlen:", labels)
+        chosen = self.ui.select("2FA-Methode waehlen:", labels)
+        if chosen not in labels:
+            raise MicrosoftLoginError("no 2FA method selected")
         return proofs[labels.index(chosen)]
 
     def _do_mfa(self, response, config):
@@ -735,7 +768,7 @@ class LpisSSOSession():
         poll_start = int(time.time() * 1000)
 
         if method_id in OTP_METHODS:
-            code = _prompt("2FA-Code eingeben:")
+            code = self.ui.text("2FA-Code eingeben:")
             end = self.session.post(
                 config["urlEndAuth"], timeout=30,
                 headers=self._api_headers(config, response.url, ctx, flow_token, session_id),
@@ -755,15 +788,15 @@ class LpisSSOSession():
             flow_token = result.get("FlowToken") or flow_token
         else:
             if entropy is not None:
-                logger.opt(colors=True).info(
-                    "<bold><yellow>Zahl in der Authenticator-App eingeben: %s</yellow></bold>"
-                    % entropy)
-                _print_box("Authenticator-App:  %-11s" % entropy)
+                self.ui.show_number(entropy)
             else:
-                logger.info("waiting for approval in the Authenticator app ...")
+                self.ui.waiting()
 
-            ctx, flow_token = self._poll_mfa(
-                response, config, method_id, ctx, flow_token, session_id)
+            try:
+                ctx, flow_token = self._poll_mfa(
+                    response, config, method_id, ctx, flow_token, session_id)
+            finally:
+                self.ui.hide_number()
 
         poll_end = int(time.time() * 1000)
 

@@ -35,6 +35,10 @@ Der 2FA-Ablauf läuft komplett im Fenster: Die Zahl für das Number Matching
 erscheint in einem eigenen Fenster, ein Code (`PhoneAppOTP`, `OneWaySMS`) wird
 in einem Dialog abgefragt.
 
+Lange Aktionen laufen in einem Hintergrund-Thread, das Fenster bleibt also
+bedienbar. *Abbrechen* wirkt sofort – auch mitten im Warten auf den
+Anmeldebeginn.
+
 ## Benutzerverwaltung
 
 Über *Verwalten …* im Zugangsbereich. Die Profile liegen in `users.json` und
@@ -77,14 +81,28 @@ Hinweise:
 | Datei | Aufgabe |
 | --- | --- |
 | `main.py` | Einstiegspunkt: Pfade, Ausgabeumleitung, Fenster |
-| `runtime.py` | Arbeitsverzeichnis und `stdout`/`stderr`-Umleitung (muss vor den Kernmodulen laufen) |
-| `bridge.py` | Warteschlange zwischen Worker-Thread und Tk; leitet die Terminal-Abfragen der Kernmodule in Dialoge um |
-| `worker.py` | Hintergrund-Thread mit den API-Aktionen |
+| `runtime.py` | Arbeitsverzeichnis, Logdatei und `stdout`/`stderr`-Umleitung (muss vor den Kernmodulen laufen) |
+| `lpis.py` | **Der eigene LPIS-Client**: Login, Navigation, Parsing, Notenschnitt, abbrechbare Anmeldung |
+| `worker.py` | Hintergrund-Thread, der die Aktionen ausführt |
+| `bridge.py` | Warteschlange zwischen Worker-Thread und Tk, plus die Prompt-Schnittstelle für den Login |
 | `app.py` | Hauptfenster |
 | `dialogs.py` | 2FA-Fenster und Benutzerverwaltung |
 | `build.py`, `wulpis.spec` | PyInstaller |
 
-Die Kernmodule (`WuLpisApiClass.py`, `ms_login.py`, `users.py`, `logger.py`)
-wurden für die GUI nicht verändert. Ihre Terminal-Abfragen (`questionary`,
-`input()`) werden in `bridge.py` zur Laufzeit durch Dialoge ersetzt, ihre
-Ausgabe über `sys.stdout` eingesammelt.
+## Kein Wrapper um die CLI
+
+Die App bringt ihre LPIS-Logik selbst mit. `gui/lpis.py` navigiert, parst die
+Seiten in Objekte (`PlanPoint`, `Course`, `Grade`) und rechnet die
+ECTS-gewichteten Schnitte selbst aus. Nichts davon druckt, fragt auf einem
+Terminal oder blockiert ohne Ausweg – jedes Warten lauscht auf ein
+`threading.Event`, ein Abbruch wirkt also sofort.
+
+`WuLpisApiClass.py` und `api.py` werden von der GUI nicht importiert; man kann
+sie löschen, ohne dass die App etwas davon merkt. Geteilt wird nur, was
+Bibliothek und nicht Darstellung ist:
+
+| Modul | Wofür |
+| --- | --- |
+| `ms_login.py` | Die Login-Kette LPIS → Keycloak → Microsoft Entra inkl. 2FA. Die App reicht über den Parameter `ui` ihre eigenen Dialoge hinein (`bridge.PromptUI`) – ohne die Standardimplementierung `TerminalUI` zu berühren, die die CLI weiter verwendet. |
+| `users.py` | Die gemeinsame Benutzerdatenbank, damit App und CLI dieselben Zugänge sehen. |
+| `logger.py` | Dieselbe Logdatei `logs/output-<user>.log` wie die CLI. |

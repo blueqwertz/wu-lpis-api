@@ -115,6 +115,25 @@ class TeeStream(io.TextIOBase):
                 self._original = None
 
 
+_logfile = None
+
+
+def log_for_user(username):
+    """Write the log next to the one the command line tool writes.
+
+    Imported late on purpose: logger.py binds loguru to sys.stdout when it is
+    first imported, which must not happen before prepare() replaced it.
+    """
+    global _logfile
+    from logger import logger, set_action, set_user_name
+
+    if _logfile is not None:
+        logger.remove(_logfile)
+    _logfile = logger.add("logs/output-%s.log" % username, level="INFO", colorize=False)
+    set_user_name(username)
+    set_action("gui")
+
+
 def prepare(on_line, on_status):
     """Install the streams, fix up sys.path and the working directory."""
     directory = data_dir()

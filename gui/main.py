@@ -21,9 +21,6 @@ def main():
     directory = runtime.prepare(on_line=bridge.log, on_status=bridge.status)
 
     try:
-        from gui import bridge as bridge_module
-        bridge_module.install(bridge)
-
         from gui.app import LpisGui
         LpisGui(bridge).mainloop()
     except Exception:

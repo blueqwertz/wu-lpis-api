@@ -1,7 +1,8 @@
 """The main window.
 
 Four tabs, one worker thread, no styling: everything uses the ttk widgets of
-the platform, so it looks like a normal Windows or macOS program.
+the platform, so it looks like a normal Windows or macOS program. The LPIS work
+itself happens in gui/lpis.py - this file only shows what comes back.
 """
 
 import os
@@ -13,11 +14,48 @@ from tkinter import filedialog, messagebox, ttk
 import users as userstore
 
 from gui import dialogs, runtime
-from gui.worker import LpisSession, Worker
+from gui.bridge import PromptUI
+from gui.lpis import LpisClient
+from gui.worker import Worker
 
 PAD = {"padx": 6, "pady": 4}
 
 MAX_LOG_LINES = 4000
+
+
+def _number(value, digits=2):
+    return "-" if value is None else ("%%.%df" % digits) % value
+
+
+def _ects(value):
+    return "%g" % (value or 0)
+
+
+def render_summaries(summaries):
+    """The averages as the text shown below the grade list."""
+    if not summaries:
+        return "keine benoteten Pruefungen gefunden"
+    lines = []
+    for summary in summaries:
+        title = summary.study
+        if summary.title:
+            title = "%s - %s" % (title, summary.title)
+        lines.append(title)
+        lines.append("  Gesamt: %s   (%s ECTS)"
+                     % (_number(summary.total.gpa), _ects(summary.total.ects)))
+        for label, entries, cap in (("Semester", summary.semesters, 30),
+                                    ("Studienjahre", summary.years, 52)):
+            if not entries:
+                continue
+            lines.append("  %s:" % label)
+            for entry in entries:
+                line = "    %-9s %s   (%s ECTS)" % (
+                    entry.label, _number(entry.gpa), _ects(entry.ects))
+                if entry.ects > cap:
+                    line += "   Best%d %s" % (cap, _number(entry.best(cap), 3))
+                lines.append(line)
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 class LpisGui(tk.Tk):
@@ -26,7 +64,7 @@ class LpisGui(tk.Tk):
         super().__init__()
         self.bridge = bridge
         self.store = userstore.UserStore()
-        self.session = LpisSession(bridge)
+        self.client = LpisClient(PromptUI(bridge))
         self.worker = Worker(bridge)
         self.worker.start()
 
@@ -34,10 +72,8 @@ class LpisGui(tk.Tk):
         self.pumping = False
         self.current_job = None
         self.mfa_window = None
-        self.sectionpoints = []
-        self.courses = {}
+        self.studies = []
         self.tree_meta = {}
-        self.grade_capture = None
         self.log_views = []
 
         self.title("WU LPIS %s" % runtime.version())
@@ -87,10 +123,9 @@ class LpisGui(tk.Tk):
         self.logout_button = ttk.Button(frame, text="Abmelden", command=self._logout)
         self.logout_button.grid(row=0, column=6, sticky="e", **PAD)
 
-        self.account_hint = ttk.Label(
-            frame, text="Das Passwort wird nur beim ersten Login gebraucht - "
-                        "danach genuegt die gespeicherte Session.")
-        self.account_hint.grid(row=1, column=0, columnspan=7, sticky="w", padx=8, pady=(0, 6))
+        ttk.Label(frame, text="Das Passwort wird nur beim ersten Login gebraucht - "
+                              "danach genuegt die gespeicherte Session.").grid(
+            row=1, column=0, columnspan=7, sticky="w", padx=8, pady=(0, 6))
 
     def _build_tabs(self):
         self.tabs = ttk.Notebook(self)
@@ -206,14 +241,16 @@ class LpisGui(tk.Tk):
             self.grade_tree.heading(name, text=title)
             self.grade_tree.column(name, width=width, minwidth=50,
                                    anchor="e" if name == "ects" else "w")
+        self.grade_tree.tag_configure("ungueltig", foreground="#8a8a8a")
         scroll = ttk.Scrollbar(holder, orient="vertical", command=self.grade_tree.yview)
         self.grade_tree.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
         self.grade_tree.pack(fill="both", expand=True)
         panes.add(holder, weight=3)
 
-        summary = ttk.LabelFrame(panes, text="Durchschnitt")
-        self.grade_summary = tk.Text(summary, height=8, wrap="none", state="disabled")
+        summary = ttk.LabelFrame(panes, text="Durchschnitt (ECTS-gewichtet)")
+        self.grade_summary = tk.Text(summary, height=9, wrap="none", state="disabled",
+                                     font=("TkFixedFont",))
         summary_scroll = ttk.Scrollbar(summary, orient="vertical",
                                        command=self.grade_summary.yview)
         self.grade_summary.configure(yscrollcommand=summary_scroll.set)
@@ -224,7 +261,6 @@ class LpisGui(tk.Tk):
     def _build_log_tab(self):
         tab = ttk.Frame(self.tabs)
         self.tabs.add(tab, text="Protokoll")
-        self.log_tab = tab
 
         buttons = ttk.Frame(tab)
         buttons.pack(fill="x", pady=8)
@@ -259,10 +295,8 @@ class LpisGui(tk.Tk):
     # ------------------------------------------------------------------ #
 
     def _refresh_users(self, select=None):
-        titles = self.store.titles()
-        self.user_box.configure(values=titles)
-        wanted = select or self.user_variable.get()
-        user = self.store.get(wanted) or self.store.default_user()
+        self.user_box.configure(values=self.store.titles())
+        user = self.store.get(select or self.user_variable.get()) or self.store.default_user()
         if user is None and len(self.store):
             user = self.store.users[0]
         self.user_variable.set(user.title if user else "")
@@ -299,38 +333,57 @@ class LpisGui(tk.Tk):
                 if dialogs.UserEditor(self, self.store).show():
                     self._refresh_users()
             return
+
+        username = user.username
         password = self.password_variable.get()
-        # a copy, so editing the profile while the login runs cannot change
-        # the settings under the worker's feet
-        payload = userstore.User(**dict(user))
+        directory = (user.get("sessiondir") or "").strip()
+        sessionfile = os.path.join(directory, username) if directory \
+            else os.path.join("sessions", username)
+        msdomain = user.get("msdomain") or "s.wu.ac.at"
+        method = (user.get("mfa_method") or "").strip() or None
+
+        def job():
+            runtime.log_for_user(username)
+            return self.client.login(username, password, sessionfile=sessionfile,
+                                     msdomain=msdomain, mfa_method=method)
+
         self._set_status("Anmeldung laeuft ...")
-        self.worker.submit("login", lambda: self.session.login(payload, password))
+        self.worker.submit("login", job)
 
     def _logout(self):
-        if self.busy or not self.session.connected:
+        if self.busy or not self.client.connected:
             return
         if not messagebox.askyesno(
                 "Abmelden", "Gespeicherte Session loeschen? Die naechste Anmeldung "
                             "braucht wieder Passwort und 2FA."):
             return
-        self.worker.submit("logout", self.session.logout)
+        self.worker.submit("logout", self.client.logout)
 
     def _load_courses(self):
-        if self.busy or not self.session.connected:
+        if self.busy or not self.client.connected:
             return
+        study = self._selected_study(self.course_study.get())
+
+        def progress(done, total, name):
+            self.bridge.status("Lade Lehrveranstaltungen %d/%d - %s" % (done, total, name))
+
         self._set_status("Lehrveranstaltungen werden geladen ...")
-        value = self._selected_sectionpoint(self.course_study.get())
-        self.worker.submit("infos", lambda: self.session.infos(value))
+        self.worker.submit("courses", lambda: self.client.plan_points(
+            study, progress=progress, cancel=self.worker.cancel))
 
     def _load_grades(self):
-        if self.busy or not self.session.connected:
+        if self.busy or not self.client.connected:
             return
+
+        def job():
+            grades = self.client.grades()
+            return grades, self.client.summaries(grades)
+
         self._set_status("Noten werden geladen ...")
-        self.grade_capture = []
-        self.worker.submit("grades", self.session.grades)
+        self.worker.submit("grades", job)
 
     def _start_registration(self):
-        if self.busy or not self.session.connected:
+        if self.busy or not self.client.connected:
             return
         planobject = self.reg_planobject.get().strip()
         course = self.reg_course.get().strip()
@@ -344,27 +397,27 @@ class LpisGui(tk.Tk):
             messagebox.showwarning("Anmeldung", "Vorlauf muss eine Zahl sein.")
             return
 
-        sectionpoint = self._selected_sectionpoint(self.reg_study.get())
-        course2 = self.reg_course2.get().strip()
-        self._remember_registration(sectionpoint, planobject, course, course2, offset)
+        study = self._selected_study(self.reg_study.get())
+        fallback = self.reg_course2.get().strip()
+        self._remember_registration(study, planobject, course, fallback, offset)
+
         self._set_status("Anmeldung laeuft - Fenster offen lassen ...")
-        self.worker.submit("registration", lambda: self.session.registration(
-            sectionpoint, planobject, course, course2, offset))
+        self.worker.submit("registration", lambda: self.client.register(
+            study, planobject, course, fallback, offset,
+            cancel=self.worker.cancel, progress=self.bridge.status))
 
     def _stop_registration(self):
-        if not self.busy:
-            return
-        if messagebox.askyesno("Abbrechen", "Laufende Anmeldung abbrechen?"):
+        if self.busy and messagebox.askyesno("Abbrechen", "Laufende Aktion abbrechen?"):
             self.worker.stop_current()
 
-    def _remember_registration(self, sectionpoint, planobject, course, course2, offset):
+    def _remember_registration(self, study, planobject, course, fallback, offset):
         user = self._current_user()
         if user is None:
             return
-        user["sectionpoint"] = sectionpoint or ""
+        user["sectionpoint"] = study or ""
         user["planobject"] = planobject
         user["course"] = course
-        user["course2"] = course2
+        user["course2"] = fallback
         user["offset"] = offset
         try:
             self.store.save()
@@ -372,71 +425,58 @@ class LpisGui(tk.Tk):
             self._log("Einstellungen konnten nicht gespeichert werden: %s" % error)
 
     # ------------------------------------------------------------------ #
-    # course tree
+    # filling the views
     # ------------------------------------------------------------------ #
 
-    def _selected_sectionpoint(self, title):
-        for entry in self.sectionpoints:
-            if entry["name"] == title:
-                return entry["value"]
-        return self.sectionpoints[0]["value"] if self.sectionpoints else None
+    def _selected_study(self, title):
+        for study in self.studies:
+            if study.name == title:
+                return study.value
+        return self.studies[0].value if self.studies else None
 
-    def _fill_sectionpoints(self, entries):
-        self.sectionpoints = entries or []
-        names = [entry["name"] for entry in self.sectionpoints]
+    def _fill_studies(self, studies):
+        self.studies = studies or []
+        names = [study.name for study in self.studies]
         self.course_study_box.configure(values=names)
         self.reg_study_box.configure(values=names)
 
         user = self._current_user()
         stored = (user.get("sectionpoint") if user else "") or ""
         chosen = names[0] if names else ""
-        for entry in self.sectionpoints:
-            if entry["value"] == stored:
-                chosen = entry["name"]
+        for study in self.studies:
+            if study.value == stored:
+                chosen = study.name
                 break
         self.course_study.set(chosen)
         self.reg_study.set(chosen)
 
-    def _fill_courses(self, planpunkte):
-        self.courses = planpunkte or {}
+    def _fill_courses(self, points):
         self.tree_meta = {}
         self.course_tree.delete(*self.course_tree.get_children())
 
         stack = []  # (depth, tree item)
-        for key, planpunkt in self.courses.items():
-            depth = int(planpunkt.get("depth") or 0)
-            while stack and stack[-1][0] >= depth:
+        for point in points or []:
+            while stack and stack[-1][0] >= point.depth:
                 stack.pop()
             parent = stack[-1][1] if stack else ""
-            label = "%s %s" % (planpunkt.get("type", ""), planpunkt.get("name", ""))
             item = self.course_tree.insert(
-                parent, "end", text=label.strip(),
-                values=(key, "", "", "", planpunkt.get("lv_status", ""),
-                        planpunkt.get("result", "")), open=depth < 2)
-            self.tree_meta[item] = {"pp": key}
-            stack.append((depth, item))
+                parent, "end", text=point.label,
+                values=(point.id, "", "", "", point.status, point.result),
+                open=point.depth < 2)
+            self.tree_meta[item] = {"pp": point.id}
+            stack.append((point.depth, item))
 
-            lvs = planpunkt.get("lvs") or {}
-            if "" in lvs:
-                self.course_tree.insert(item, "end", text=planpunkt.get("lv_status", ""))
-                continue
-            for number, lv in lvs.items():
-                free = lv.get("free", "")
-                window = ""
-                if lv.get("date_start"):
-                    window = "ab %s" % lv["date_start"]
-                elif lv.get("date_end"):
-                    window = "bis %s" % lv["date_end"]
-                if lv.get("registerd_at"):
-                    window = "angemeldet %s" % lv["registerd_at"]
-                full = str(free) in ("0", "") or "nicht" in (lv.get("status") or "")
+            if point.note:
+                self.course_tree.insert(item, "end", text=point.note)
+            for course in point.courses:
+                free = "" if course.free is None else "%s/%s" % (course.free,
+                                                                 course.capacity)
                 child = self.course_tree.insert(
-                    item, "end", text=lv.get("name", ""),
-                    values=(number, lv.get("semester", ""), lv.get("prof", ""),
-                            "%s/%s" % (free, lv.get("capacity", "")),
-                            lv.get("status", ""), window),
-                    tags=("voll",) if full else ())
-                self.tree_meta[child] = {"pp": key, "lv": number}
+                    item, "end", text=course.name,
+                    values=(course.number, course.semester, course.professor,
+                            free, course.status, course.window),
+                    tags=() if course.open else ("voll",))
+                self.tree_meta[child] = {"pp": point.id, "lv": course.number}
 
     def _take_over_selection(self):
         selection = self.course_tree.selection()
@@ -450,28 +490,19 @@ class LpisGui(tk.Tk):
         self.reg_study.set(self.course_study.get())
         self.tabs.select(1)
 
-    def _fill_grades(self, entries):
+    def _fill_grades(self, grades, summaries):
         self.grade_tree.delete(*self.grade_tree.get_children())
-        for entry in entries or []:
-            ects = entry.get("ects")
+        for grade in grades or []:
             self.grade_tree.insert(
                 "", "end",
-                values=(entry.get("exam_type", ""), entry.get("title", ""),
-                        entry.get("professor", ""), "" if ects is None else "%g" % ects,
-                        entry.get("grade_text", ""), entry.get("grade_date", ""),
-                        entry.get("study", "")))
-
-    def _fill_grade_summary(self):
-        lines = self.grade_capture or []
-        start = next((index for index, line in enumerate(lines)
-                      if line.startswith("GPA by Study")), None)
-        text = "\n".join(lines[start:]) if start is not None else \
-            "keine Durchschnittswerte gefunden"
+                values=(grade.exam_type, grade.title, grade.professor,
+                        "" if grade.ects is None else "%g" % grade.ects,
+                        grade.grade_text, grade.grade_date, grade.study),
+                tags=("ungueltig",) if grade.outdated else ())
         self.grade_summary.configure(state="normal")
         self.grade_summary.delete("1.0", "end")
-        self.grade_summary.insert("end", text)
+        self.grade_summary.insert("end", render_summaries(summaries))
         self.grade_summary.configure(state="disabled")
-        self.grade_capture = None
 
     # ------------------------------------------------------------------ #
     # events from the worker
@@ -524,34 +555,49 @@ class LpisGui(tk.Tk):
             return
 
         if job == "login":
-            self._fill_sectionpoints(result)
-            self._set_status("angemeldet als %s" % self.session.username)
+            self._fill_studies(result)
+            self._set_status("angemeldet als %s" % self.client.username)
         elif job == "logout":
             self._set_status("abgemeldet")
+            self.studies = []
             self.course_tree.delete(*self.course_tree.get_children())
             self.grade_tree.delete(*self.grade_tree.get_children())
-        elif job == "infos":
+        elif job == "courses":
             self._fill_courses(result)
-            self._set_status("%d Studienplanpunkte geladen" % len(result or {}))
+            courses = sum(len(point.courses) for point in result or [])
+            self._set_status("%d Studienplanpunkte, %d Lehrveranstaltungen"
+                             % (len(result or []), courses))
         elif job == "grades":
-            self._fill_grades(result)
-            self._fill_grade_summary()
-            self._set_status("%d Noten geladen" % len(result or []))
+            grades, summaries = result
+            self._fill_grades(grades, summaries)
+            self._set_status("%d Noten geladen" % len(grades))
         elif job == "registration":
-            self._set_status("Anmeldung beendet - Details im Protokoll")
+            self._registration_done(result)
         self._update_buttons()
 
+    def _registration_done(self, result):
+        if result is None:
+            self._set_status("Anmeldung beendet")
+            return
+        self._set_status(result.message or ("angemeldet" if result.registered
+                                            else "Anmeldung beendet"))
+        messagebox.showinfo(
+            "Anmeldung",
+            result.message or ("Anmeldung fuer %s abgeschickt." % result.course))
+
     def _job_failed(self, job, error):
-        self.grade_capture = None
         if error == "abgebrochen":
             self._set_status("abgebrochen")
             self._update_buttons()
             return
-        last = [line for line in error.strip().splitlines() if line.strip()]
-        message = last[-1] if last else "unbekannter Fehler"
-        self._log(error.rstrip())
+        lines = [line for line in error.strip().splitlines() if line.strip()]
+        message = lines[-1] if lines else "unbekannter Fehler"
+        if len(lines) > 1:
+            self._log(error.rstrip())
+        else:
+            self._log("Fehler: %s" % message)
         if job == "login":
-            self.session.api = None
+            self.client.browser = None
         self._set_status("Fehler: %s" % message)
         self._update_buttons()
         messagebox.showerror("Fehler", "%s\n\nDetails im Tab \"Protokoll\"." % message)
@@ -561,8 +607,6 @@ class LpisGui(tk.Tk):
     # ------------------------------------------------------------------ #
 
     def _log(self, line):
-        if self.grade_capture is not None:
-            self.grade_capture.append(line)
         for view in self.log_views:
             view.configure(state="normal")
             view.insert("end", line + "\n")
@@ -602,7 +646,7 @@ class LpisGui(tk.Tk):
         self._update_buttons()
 
     def _update_buttons(self):
-        connected = self.session.connected
+        connected = self.client.connected
         idle = not self.busy
 
         def state(widget, enabled):
@@ -617,7 +661,7 @@ class LpisGui(tk.Tk):
         state(self.take_over_button, idle and connected)
         state(self.load_grades_button, idle and connected)
         state(self.start_button, idle and connected)
-        state(self.stop_button, self.busy and self.current_job == "registration")
+        state(self.stop_button, self.busy)
 
     def _show_mfa(self, number):
         self._close_mfa()
