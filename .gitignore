@@ -2,7 +2,10 @@ creds.txt
 *.pyc
 *.bin
 .credentials*
+users.json
 creds/
+build/
+dist/
 .DS_STORE
 logs/*
 __pycache__/
