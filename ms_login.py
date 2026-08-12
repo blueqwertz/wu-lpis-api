@@ -30,7 +30,7 @@ import re
 import sys
 import time
 import uuid
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -43,6 +43,48 @@ MS_HOSTS = (
     "login.microsoftonline.com",
     "login.microsoft.com",
     "login.live.com",
+)
+
+KEYCLOAK_HOST = "bach-id.wu.ac.at"
+
+# Keycloak takes an identity provider hint on the OIDC authorization endpoint
+# and then redirects straight to that broker. That is the documented way to
+# skip the login page, so the markup of the page does not have to be parsed.
+IDP_HINT_PARAM = "kc_idp_hint"
+IDP_HINT_VALUE = "wu-microsoft"
+
+# Hosts a redirect found on the Keycloak page is allowed to point to. Compared
+# against the parsed hostname, so lookalike domains cannot turn the fallback
+# into an open redirect.
+KEYCLOAK_REDIRECT_HOSTS = (KEYCLOAK_HOST,) + MS_HOSTS
+
+_AUTH_ENDPOINT_RE = re.compile(r"/realms/[^/]+/protocol/openid-connect/auth/?$")
+
+# Keycloak answers the authorization request with "401 WWW-Authenticate:
+# Negotiate" and a body that posts itself back to /login-actions/. Only after
+# that post does the flow continue to the identity provider, so this page has
+# to be submitted rather than searched for a redirect. Two is plenty - the
+# realm only has one Kerberos execution.
+MAX_KEYCLOAK_FORMS = 2
+
+# Fallback for the case that Keycloak ignores the hint and renders its
+# "you are being redirected" page anyway. Tried in this order, the first
+# candidate that passes _safe_redirect() wins.
+_REDIRECT_PATTERNS = (
+    # Keycloak wraps the broker url in decodeHTMLEntities('...') / ("...").
+    re.compile(r"decodeHTMLEntities\(\s*'([^']+)'\s*\)"),
+    re.compile(r'decodeHTMLEntities\(\s*"([^"]+)"\s*\)'),
+    # location.replace("...") / window.location.assign('...')
+    re.compile(r"""(?<![\w$.])(?:window\.|document\.)?location\."""
+               r"""(?:replace|assign)\(\s*['"]([^'"]+)['"]\s*\)"""),
+    # window.location = "..." / window.location.href = '...'
+    re.compile(r"""(?<![\w$.])(?:window\.|document\.)?location(?:\.href)?"""
+               r"""\s*=\s*['"]([^'"]+)['"]"""),
+    # <a href=".../broker/<alias>/login?...">
+    re.compile(r"""href\s*=\s*['"]([^'"]*broker/[^'"/]+/login[^'"]*)['"]""", re.I),
+    # <meta http-equiv="refresh" content="0; url=...">
+    re.compile(r"""<meta[^>]+http-equiv\s*=\s*['"]?refresh['"]?[^>]*"""
+               r"""content\s*=\s*['"][^'"]*?url\s*=\s*([^'"]+)['"]""", re.I),
 )
 
 USER_AGENT = (
@@ -58,9 +100,45 @@ OTP_METHODS = ("PhoneAppOTP", "OneWaySMS", "ConsolidatedTelephony")
 MAX_STEPS = 25
 POLL_INTERVAL = 1.0
 
+# What Microsoft reports when an approval did not simply succeed. Without this
+# the user only saw the raw result value, e.g. "PhoneAppDenied".
+MFA_OUTCOMES = {
+    "PhoneAppDenied":
+        "the sign-in was denied in the Authenticator app",
+    "PhoneAppNoResponse":
+        "nobody reacted to the Authenticator prompt",
+    "PhoneAppFraud":
+        "the sign-in was reported as fraud in the Authenticator app - Microsoft "
+        "may have blocked the account, check https://mysignins.microsoft.com",
+    "AuthenticationMethodLocked":
+        "the 2FA method is temporarily locked by Microsoft",
+    "SASValidationFailed":
+        "Microsoft could not validate the 2FA response",
+    "InvalidSessionId":
+        "the 2FA session expired - please start the login again",
+    "UserAuthFailedDuplicateRequest":
+        "Microsoft is still busy with the previous prompt - wait a minute "
+        "before trying again",
+}
+
+# A rejection is a decision, not a glitch: repeating the login would only fire
+# another prompt at the same phone.
+DENIED_OUTCOMES = ("PhoneAppDenied", "PhoneAppFraud")
+
 
 class MicrosoftLoginError(Exception):
     pass
+
+
+class MicrosoftLoginDenied(MicrosoftLoginError):
+    """The sign-in was actively rejected on the phone."""
+
+
+def _mfa_error(outcome, message=None):
+    """Turn a Microsoft 2FA result value into a readable exception."""
+    explanation = MFA_OUTCOMES.get(outcome) or message or outcome or "unknown reason"
+    failure = MicrosoftLoginDenied if outcome in DENIED_OUTCOMES else MicrosoftLoginError
+    return failure("2FA was not completed - %s" % explanation)
 
 
 def _parse_config(text):
@@ -97,6 +175,81 @@ def _config_error(config):
         if value:
             return str(value)
     return None
+
+
+def _decode_url_literal(raw):
+    """Undo html and javascript escaping of a url taken out of a page."""
+    unescaped = raw.strip().replace("\\/", "/").replace("\\u0026", "&")
+    return htmllib.unescape(unescaped)
+
+
+def _safe_redirect(base_url, raw):
+    """Resolve a redirect candidate, or None if it must not be followed.
+
+    Only absolute https urls on the expected Keycloak/Microsoft hosts are
+    accepted so that a manipulated page cannot send the session elsewhere.
+    """
+    if not raw:
+        return None
+    url = urljoin(base_url, _decode_url_literal(raw))
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        return None
+    if (parsed.hostname or "").lower() not in KEYCLOAK_REDIRECT_HOSTS:
+        return None
+    return url
+
+
+def _page_title(text):
+    try:
+        tag = BeautifulSoup(text, "html.parser").find("title")
+    except Exception:
+        return ""
+    if not tag:
+        return ""
+    return " ".join(tag.get_text().split())[:120]
+
+
+def _keycloak_diagnostics(response):
+    """Error text for an unusable Keycloak page.
+
+    Deliberately limited to metadata: no body, no cookies, no query string -
+    those carry the oauth state, the session code and the redirect target.
+    """
+    parsed = urlparse(response.url)
+    body = response.text or ""
+    content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip()
+    return ("no identity provider redirect on the Keycloak page "
+            "(status=%s host=%s path=%s content-type=%s title=%r body-length=%d)"
+            % (response.status_code, parsed.hostname or "?", parsed.path or "/",
+               content_type or "unknown", _page_title(body), len(body)))
+
+
+def _print_box(message):
+    """Print the 2FA number in a box, also on a console that is not utf-8.
+
+    A plain Windows console runs on cp1252 and cannot encode the box drawing
+    characters, which used to abort the login right before the MFA poll.
+    """
+    width = len(message) + 4
+    fancy = ["╔" + "═" * width + "╗",
+             "║  %s  ║" % message,
+             "╚" + "═" * width + "╝"]
+    plain = ["+" + "-" * width + "+",
+             "|  %s  |" % message,
+             "+" + "-" * width + "+"]
+
+    encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+    try:
+        "".join(fancy).encode(encoding)
+        lines = fancy
+    except (UnicodeEncodeError, LookupError):
+        lines = plain
+
+    try:
+        print("\n\033[93m%s\033[0m\n" % "\n".join(lines))
+    except UnicodeEncodeError:  # pragma: no cover - last resort
+        print("\n%s\n" % "\n".join(plain))
 
 
 def _require_tty(what):
@@ -153,6 +306,10 @@ class LpisSSOSession():
         self.correlation_id = str(uuid.uuid4())
         self.used_stored_session = False
         self.did_interactive_login = False
+        # Guards against repeating the hinted authorization request forever if
+        # Keycloak keeps sending us back to the login page.
+        self.idp_hint_attempted = False
+        self.keycloak_forms_submitted = 0
 
     # ------------------------------------------------------------------ #
     # session persistence
@@ -211,6 +368,9 @@ class LpisSSOSession():
 
         try:
             response = self._run()
+        except MicrosoftLoginDenied:
+            # retrying would just send a second prompt to the same phone
+            raise
         except MicrosoftLoginError:
             if not had_session:
                 raise
@@ -227,6 +387,8 @@ class LpisSSOSession():
     # ------------------------------------------------------------------ #
 
     def _run(self):
+        self.idp_hint_attempted = False
+        self.keycloak_forms_submitted = 0
         response = self.session.get(START_URL, timeout=30)
 
         for _ in range(MAX_STEPS):
@@ -271,22 +433,107 @@ class LpisSSOSession():
     # ------------------------------------------------------------------ #
 
     def _handle_keycloak(self, response):
-        text = response.text
+        # The realm only offers the "wu-microsoft" identity provider, so ask
+        # Keycloak itself to jump there instead of reading its markup.
+        hinted = self._request_with_idp_hint(response)
+        if hinted is not None:
+            return hinted
 
-        # The login page has a single identity provider ("wu-microsoft") and
-        # redirects to it via javascript.
-        match = re.search(r"decodeHTMLEntities\(\s*'([^']+)'\s*\)", text)
-        if not match:
-            match = re.search(r'href="([^"]*broker/[^"/]+/login\?[^"]*)"', text)
-        if not match:
-            error = BeautifulSoup(text, "html.parser").find(
-                "span", {"class": "kc-feedback-text"})
-            raise MicrosoftLoginError(
-                "no identity provider link on the Keycloak page (%s)"
-                % (error.get_text(strip=True) if error else response.url))
+        # Before any of that the realm runs a Kerberos/SPNEGO execution. It
+        # answers with 401 and a self-posting form; the identity provider only
+        # appears on the page after that form has been sent.
+        continued = self._submit_keycloak_form(response)
+        if continued is not None:
+            return continued
 
-        target = htmllib.unescape(match.group(1)).replace("\\/", "/")
-        return self.session.get(urljoin(response.url, target), timeout=30)
+        target = self._keycloak_redirect_target(response)
+        if target is None:
+            raise MicrosoftLoginError(_keycloak_diagnostics(response))
+        return self.session.get(target, timeout=30)
+
+    def _authorization_url(self, response):
+        """The OIDC authorization url this response came from, if any."""
+        candidates = [response.url]
+        candidates.extend(
+            step.url for step in reversed(getattr(response, "history", None) or []))
+        for url in candidates:
+            parsed = urlparse(url)
+            if (parsed.hostname or "").lower() != KEYCLOAK_HOST:
+                continue
+            if _AUTH_ENDPOINT_RE.search(parsed.path):
+                return parsed
+        return None
+
+    def _request_with_idp_hint(self, response):
+        """Repeat the authorization request once with kc_idp_hint set.
+
+        Returns the new response, or None if the hint does not apply or was
+        already tried during this run.
+        """
+        if self.idp_hint_attempted:
+            return None
+
+        parsed = self._authorization_url(response)
+        if parsed is None:
+            return None
+
+        self.idp_hint_attempted = True
+
+        query = parse_qsl(parsed.query, keep_blank_values=True)
+        if any(key == IDP_HINT_PARAM for key, _ in query):
+            return None
+        query.append((IDP_HINT_PARAM, IDP_HINT_VALUE))
+        target = urlunparse(parsed._replace(query=urlencode(query)))
+
+        logger.info("Keycloak login page, retrying the authorization request "
+                    "with %s=%s" % (IDP_HINT_PARAM, IDP_HINT_VALUE))
+        return self.session.get(target, timeout=30)
+
+    def _submit_keycloak_form(self, response):
+        """Send Keycloak's self-posting interstitial onwards.
+
+        Returns the new response, or None if the page is not such a form.
+        A form asking the user for anything is never submitted blindly.
+        """
+        if self.keycloak_forms_submitted >= MAX_KEYCLOAK_FORMS:
+            return None
+
+        form = BeautifulSoup(response.text or "", "html.parser").find("form")
+        if form is None:
+            return None
+
+        # a real credential form is none of our business here
+        for field in form.find_all("input"):
+            if (field.get("type") or "text").lower() in ("password", "text", "email"):
+                return None
+
+        action = urljoin(response.url, form.get("action") or response.url)
+        parsed = urlparse(action)
+        if parsed.scheme != "https" or (parsed.hostname or "").lower() != KEYCLOAK_HOST:
+            return None
+
+        data = {}
+        for field in form.find_all("input"):
+            name = field.get("name")
+            if name:
+                data[name] = field.get("value", "")
+
+        self.keycloak_forms_submitted += 1
+        logger.info("Keycloak Kerberos step - continuing with the alternative login")
+
+        if (form.get("method") or "post").lower() == "get":
+            return self.session.get(action, params=data, timeout=30)
+        return self.session.post(action, data=data, timeout=30)
+
+    def _keycloak_redirect_target(self, response):
+        """First redirect on the page that is safe to follow, or None."""
+        text = response.text or ""
+        for pattern in _REDIRECT_PATTERNS:
+            for match in pattern.finditer(text):
+                target = _safe_redirect(response.url, match.group(1))
+                if target:
+                    return target
+        return None
 
     # ------------------------------------------------------------------ #
     # Microsoft Entra ID
@@ -475,8 +722,10 @@ class LpisSSOSession():
             })
         result = begin.json()
         if not result.get("Success"):
+            outcome = result.get("ResultValue")
             raise MicrosoftLoginError(
-                "could not start 2FA: %s" % (result.get("Message") or result.get("ResultValue")))
+                "could not start 2FA - %s"
+                % (MFA_OUTCOMES.get(outcome) or result.get("Message") or outcome))
 
         ctx = result.get("Ctx") or config.get("sCtx", "")
         flow_token = result.get("FlowToken") or config.get("sFT", "")
@@ -501,8 +750,7 @@ class LpisSSOSession():
                 })
             result = end.json()
             if not result.get("Success"):
-                raise MicrosoftLoginError(
-                    "2FA failed: %s" % (result.get("Message") or result.get("ResultValue")))
+                raise _mfa_error(result.get("ResultValue"), result.get("Message"))
             ctx = result.get("Ctx") or ctx
             flow_token = result.get("FlowToken") or flow_token
         else:
@@ -510,9 +758,7 @@ class LpisSSOSession():
                 logger.opt(colors=True).info(
                     "<bold><yellow>Zahl in der Authenticator-App eingeben: %s</yellow></bold>"
                     % entropy)
-                print("\n\033[93m╔══════════════════════════════════╗")
-                print("║  Authenticator-App:  %-11s ║" % entropy)
-                print("╚══════════════════════════════════╝\033[0m\n")
+                _print_box("Authenticator-App:  %-11s" % entropy)
             else:
                 logger.info("waiting for approval in the Authenticator app ...")
 
@@ -568,8 +814,7 @@ class LpisSSOSession():
                 return ctx, flow_token
 
             if outcome != "AuthenticationPending":
-                raise MicrosoftLoginError(
-                    "2FA failed: %s" % (result.get("Message") or outcome))
+                raise _mfa_error(outcome, result.get("Message"))
 
             time.sleep(POLL_INTERVAL)
 

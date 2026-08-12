@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import requests
 import zipfile
@@ -31,6 +32,11 @@ def get_local_version():
         with open(LOCAL_VERSION_FILE, "r") as f:
             return f.read().strip()
     return "0.0"
+
+def version_key(value):
+    """"1.0.6" -> (1, 0, 6), so versions compare by number and not by text."""
+    return tuple(int(part) for part in re.findall(r"\d+", value or "")) or (0,)
+
 
 def download_and_extract_zip():
     """Download the latest repository ZIP file and extract it."""
@@ -89,7 +95,7 @@ def check():
     remote_version = get_remote_version()
     local_version = get_local_version()
 
-    if remote_version and remote_version != local_version:
+    if remote_version and version_key(remote_version) > version_key(local_version):
         logger.opt(colors=True).info(f"<yellow>new version {remote_version} found! updating...</yellow>")
         if download_and_extract_zip():
             with open(LOCAL_VERSION_FILE, "w") as f:
@@ -97,5 +103,11 @@ def check():
             restart_program()
         else:
             logger.opt(colors=True).error("<red>failed to update repository</red>")
+    elif remote_version and version_key(remote_version) < version_key(local_version):
+        # never pull an older tree over a newer one - that would silently
+        # revert a local fix that has not been pushed yet
+        logger.opt(colors=True).info(
+            "<yellow>local version %s is ahead of %s on the server - skipping update</yellow>"
+            % (local_version, remote_version))
     else:
         logger.opt(colors=True).info("<green>latest version %s is already installed</green>" % (local_version))

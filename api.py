@@ -3,6 +3,7 @@ try:
 	import os
 	import traceback
 	from WuLpisApiClass import WuLpisApi
+	from ms_login import MicrosoftLoginError
 	from logger import logger, set_user_name, set_action
 	import updater
 except ImportError as e:
@@ -75,6 +76,13 @@ if __name__ == '__main__':
 			method()
 		else:
 			logger.log("This action is not available.")
+	except MicrosoftLoginError as error:
+		# an expected outcome (denied 2FA, wrong password, ...) - report it
+		# plainly instead of dumping a traceback at the user
+		# "\<" keeps loguru from reading a stray angle bracket as colour markup
+		logger.opt(colors=True).error(
+			"<red>login failed: %s</red>" % str(error).replace("<", "\\<"))
+		exit(1)
 	except Exception:
 		logger.error(traceback.format_exc())
 		exit()
