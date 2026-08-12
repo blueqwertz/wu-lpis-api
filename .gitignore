@@ -8,3 +8,5 @@ logs/*
 __pycache__/
 sessions/
 .tmp/
+templates/
+tests/
