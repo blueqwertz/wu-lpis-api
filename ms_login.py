@@ -125,13 +125,52 @@ MFA_OUTCOMES = {
 # another prompt at the same phone.
 DENIED_OUTCOMES = ("PhoneAppDenied", "PhoneAppFraud")
 
+# When Entra ID has no readable text for a failure it puts the bare AADSTS
+# number into the page, which used to end the login with a naked "50126".
+AAD_ERRORS = {
+    "50034": "this account does not exist in the WU tenant",
+    "50053": "the account is temporarily locked after too many failed sign-ins "
+             "- wait a few minutes before trying again",
+    "50055": "the password has expired and has to be changed once in a browser",
+    "50056": "the account has no valid password at Microsoft",
+    "50057": "the account is disabled",
+    "50058": "Microsoft could not identify the session - start the login again",
+    "50076": "Microsoft demands a fresh 2FA for this sign-in",
+    "50079": "the account has to register a 2FA method first "
+             "(https://aka.ms/mfasetup)",
+    "50105": "the account is not entitled to use this application",
+    "50126": "wrong username or password",
+    "50128": "the domain of the username is unknown to Microsoft",
+    "50129": "the domain of the username is unknown to Microsoft",
+    "50133": "the stored session is no longer valid, most likely because the "
+             "password was changed",
+    "50144": "the WU password has expired and has to be renewed",
+    "50158": "the sign-in was stopped by a conditional access rule",
+    "50173": "the password was changed - the stored session has to be renewed",
+    "53003": "the sign-in was blocked by a conditional access policy",
+    "500121": "the 2FA was not completed in time",
+    "700016": "the LPIS application is not known in this tenant",
+}
+
+# Codes that mean the username/password pair itself was refused. Trying the
+# same pair again only pushes the account towards Microsoft's smart lockout.
+CREDENTIAL_ERRORS = ("50126", "50034", "50056", "50057", "50128", "50129")
+
 
 class MicrosoftLoginError(Exception):
     pass
 
 
-class MicrosoftLoginDenied(MicrosoftLoginError):
+class MicrosoftLoginFinal(MicrosoftLoginError):
+    """A rejection that a second attempt cannot turn into a success."""
+
+
+class MicrosoftLoginDenied(MicrosoftLoginFinal):
     """The sign-in was actively rejected on the phone."""
+
+
+class MicrosoftCredentialsRejected(MicrosoftLoginFinal):
+    """Microsoft did not accept the username/password pair."""
 
 
 def _mfa_error(outcome, message=None):
@@ -175,6 +214,39 @@ def _config_error(config):
         if value:
             return str(value)
     return None
+
+
+def _plain_text(raw, limit=200):
+    """Page text without markup, collapsed to one line."""
+    try:
+        text = BeautifulSoup(str(raw), "html.parser").get_text(" ")
+    except Exception:
+        text = str(raw)
+    text = " ".join(text.split())
+    if len(text) > limit:
+        text = text[:limit].rstrip() + " ..."
+    return text
+
+
+def _aad_code(raw):
+    """The AADSTS number inside a Microsoft error, or None."""
+    text = _plain_text(raw)
+    match = re.search(r"AADSTS(\d+)", text)
+    if match:
+        return match.group(1)
+    return text if text.isdigit() else None
+
+
+def _describe_aad_error(raw):
+    """Readable text for a Microsoft error, keeping the code for reference."""
+    if not raw:
+        return None
+    text = _plain_text(raw)
+    explanation = AAD_ERRORS.get(_aad_code(raw))
+    if not explanation:
+        return text
+    # a bare number carries nothing beyond the explanation itself
+    return explanation if text.isdigit() else "%s (%s)" % (explanation, text)
 
 
 def _decode_url_literal(raw):
@@ -368,8 +440,9 @@ class LpisSSOSession():
 
         try:
             response = self._run()
-        except MicrosoftLoginDenied:
-            # retrying would just send a second prompt to the same phone
+        except MicrosoftLoginFinal:
+            # a denial would just send a second prompt to the same phone, and a
+            # refused password would count twice towards Microsoft's lockout
             raise
         except MicrosoftLoginError:
             if not had_session:
@@ -598,14 +671,26 @@ class LpisSSOSession():
                 "Microsoft requires MFA setup for this account - "
                 "please complete it once in a browser (https://aka.ms/mfasetup)")
 
-        error = _config_error(config)
+        error = _describe_aad_error(_config_error(config))
         raise MicrosoftLoginError(
             "unhandled Microsoft page '%s'%s" % (page, ": %s" % error if error else ""))
+
+    def _rejected(self, error):
+        """Exception for a sign-in page that came back carrying an error."""
+        message = "Microsoft rejected the login: %s" % _describe_aad_error(error)
+        if _aad_code(error) not in CREDENTIAL_ERRORS:
+            return MicrosoftLoginError(message)
+        # the username sent to Microsoft is assembled from --msdomain, so a
+        # correct LPIS password can still fail on a wrong domain
+        return MicrosoftCredentialsRejected(
+            "%s - signed in as %s, check the password and, if the account uses "
+            "another domain, --msdomain (currently '%s')"
+            % (message, self.ms_username, self.ms_domain))
 
     def _do_password(self, response, config):
         error = _config_error(config)
         if self.did_interactive_login and error:
-            raise MicrosoftLoginError("Microsoft rejected the login: %s" % error)
+            raise self._rejected(error)
 
         if not self.password:
             raise MicrosoftLoginError(

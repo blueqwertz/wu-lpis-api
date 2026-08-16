@@ -30,6 +30,10 @@ mfa_method=PhoneAppNotification
 Microsoft-Login wird `msdomain` angehängt (Default `s.wu.ac.at`), also
 `h12345678@s.wu.ac.at`. Wer eine andere Domain braucht, setzt `--msdomain`.
 
+Leerzeilen und Zeilen mit `#` werden ignoriert, Leerzeichen rund um Schlüssel
+und Werte werden entfernt. Ein Passwort, das absichtlich mit einem Leerzeichen
+endet, gehört also nicht ins credfile, sondern an `--password`.
+
 ### 2FA
 
 Nach Benutzername und Passwort verlangt Microsoft den zweiten Faktor. Default
@@ -59,6 +63,23 @@ folgenden Läufen wird die gesamte Redirect-Kette damit ohne Passwort- und
 ohne 2FA-Abfrage durchlaufen. Der Ablageort lässt sich mit `--sessiondir`
 ändern. Ist die gespeicherte Session ungültig, wird sie verworfen und
 automatisch ein vollständiger Login gestartet.
+
+# Fehlersuche
+
+Microsoft-Fehler werden im Klartext ausgegeben, der ursprüngliche AADSTS-Code
+steht in Klammern dabei. Die häufigsten:
+
+| Meldung | Ursache |
+| --- | --- |
+| `wrong username or password` (50126) | Passwort falsch, oder der Account liegt in einer anderen Domain als `msdomain` |
+| `the account is temporarily locked ...` (50053) | Zu viele Fehlversuche, Microsoft sperrt kurzzeitig |
+| `the password has expired ...` (50055) | WU-Passwort abgelaufen |
+| `the password was changed ...` (50173) | Gespeicherte Session ungültig, wird automatisch verworfen |
+
+Bei `50126` lohnt zuerst ein Blick ins credfile: ein Leerzeichen hinter dem
+Passwort oder ein falscher `msdomain`-Eintrag sieht für Microsoft genauso aus
+wie ein falsches Passwort. Ein abgelehntes Passwort wird bewusst **nicht**
+erneut gesendet, damit der Account nicht unnötig Richtung Sperre läuft.
 
 # Copyright & License
 

@@ -21,10 +21,23 @@ except Exception:
 
 
 def file_parser(filepath, separator="="):
+	"""Read a 'key=value' credentials file.
+
+	Blank lines and '#' comments are skipped, keys and values are stripped and
+	a byte order mark is dropped. An editor that leaves a trailing space behind
+	the password, or a BOM in front of the first key, otherwise breaks the
+	login with nothing but "wrong username or password" (AADSTS50126).
+	"""
 	data = {}
-	for line in open(filepath, "r"):
-		line = line.rstrip('\n').split(separator, 1)
-		data[line[0]] = line[1]
+	for number, raw in enumerate(open(filepath, "r", encoding="utf-8-sig"), start=1):
+		line = raw.strip()
+		if not line or line.startswith("#"):
+			continue
+		if separator not in line:
+			raise ValueError("%s line %d: expected 'key%svalue', got %r"
+							 % (filepath, number, separator, line))
+		key, value = line.split(separator, 1)
+		data[key.strip()] = value.strip()
 	return data
 
 if __name__ == '__main__':
@@ -47,7 +60,10 @@ if __name__ == '__main__':
 	# values given on the command line always win
 	credentials = {}
 	if args.credfile and os.path.isfile(args.credfile):
-		credentials = file_parser(args.credfile)
+		try:
+			credentials = file_parser(args.credfile)
+		except ValueError as error:
+			parser.error(str(error))
 	elif args.credfile and not (args.username or args.password):
 		parser.error("credentials file '%s' not found - "
 					 "provide it or use --username/--password" % args.credfile)
