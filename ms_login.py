@@ -125,6 +125,18 @@ MFA_OUTCOMES = {
 # another prompt at the same phone.
 DENIED_OUTCOMES = ("PhoneAppDenied", "PhoneAppFraud")
 
+# Entra ID only puts the bare AADSTS number into the page when it re-renders
+# the sign-in form, which told the user nothing about what went wrong.
+ENTRA_ERRORS = {
+    "50126": "wrong username or password",
+    "50053": "the account is locked by Microsoft after too many attempts",
+    "50055": "the password has expired - change it at https://passwort.wu.ac.at",
+    "50057": "the account is disabled",
+    "50058": "not signed in yet",
+    "50076": "Microsoft requires 2FA for this sign-in",
+    "700016": "the application is not known to this Microsoft tenant",
+}
+
 
 class MicrosoftLoginError(Exception):
     pass
@@ -181,6 +193,21 @@ def _decode_url_literal(raw):
     """Undo html and javascript escaping of a url taken out of a page."""
     unescaped = raw.strip().replace("\\/", "/").replace("\\u0026", "&")
     return htmllib.unescape(unescaped)
+
+
+def _unescape_post_params(params):
+    """Undo the html escaping Microsoft applies to a replayed post body.
+
+    The BssoInterrupt page echoes the parameters of the interrupted request
+    back into $Config, but html escaped: a password ending in "&" comes back
+    as "...&amp;". Posting that verbatim makes Microsoft answer with
+    AADSTS50126 ("invalid username or password"), so the escaping has to be
+    reversed before the parameters go out again. The values are Microsoft's
+    own tokens (base64, guids, the credentials we sent), none of which can
+    legitimately contain an entity.
+    """
+    return {key: htmllib.unescape(value) if isinstance(value, str) else value
+            for key, value in params.items()}
 
 
 def _safe_redirect(base_url, raw):
@@ -579,7 +606,7 @@ class LpisSSOSession():
             post_params = config.get("oPostParams")
             if post_params:
                 return self.session.post(
-                    target, data=post_params, timeout=30,
+                    target, data=_unescape_post_params(post_params), timeout=30,
                     headers={"Referer": response.url,
                              "Origin": "https://login.microsoftonline.com"})
             return self.session.get(target, timeout=30)
@@ -605,7 +632,10 @@ class LpisSSOSession():
     def _do_password(self, response, config):
         error = _config_error(config)
         if self.did_interactive_login and error:
-            raise MicrosoftLoginError("Microsoft rejected the login: %s" % error)
+            explanation = ENTRA_ERRORS.get(error)
+            raise MicrosoftLoginError(
+                "Microsoft rejected the login: %s"
+                % ("%s (AADSTS%s)" % (explanation, error) if explanation else error))
 
         if not self.password:
             raise MicrosoftLoginError(
