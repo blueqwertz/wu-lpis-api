@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import datetime, re, os, time, pickle, sys
+import datetime, re, os, time, pickle, sys, copy, threading, collections
+from concurrent.futures import ThreadPoolExecutor
 from lxml import html
 from bs4 import BeautifulSoup
 import mechanize, time
@@ -27,6 +28,186 @@ def ask_select(message, choices):
 	except Exception as error:
 		logger.warning("could not show the selection prompt: %s" % error)
 		return None
+
+
+Attempt = collections.namedtuple("Attempt", "planned sent elapsed outcome")
+
+
+class BurstPoller():
+	"""Fires overlapping requests at a page around the second it opens.
+
+	A sequential poll loop gets exactly one attempt per round trip, so whether
+	it wins comes down to where its attempts happen to fall relative to the
+	opening second: an attempt that leaves a moment too early is answered with
+	"not yet possible", and the next one only goes out once that answer came
+	back. Firing on a fixed grid instead, with the requests overlapping in
+	flight, takes that timing luck out: whatever the round trip turns out to
+	be, some request is always in the air when the registration flips open.
+
+	The first response that shows the registration as open wins. Note that
+	this is not the same as the first response that arrives - every request
+	sent before the opening second comes back perfectly fine, just with a page
+	saying the registration has not started. Once there is a winner no further
+	requests are sent, and answers still in flight are discarded.
+	"""
+
+	def __init__(self, sessions, url, looks_open, confirm=None, interval=0.1,
+				 lead=3.0, deadline=10.0, timeout=5.0):
+		self.sessions = sessions
+		self.url = url
+		# looks_open runs inside the workers and must stay cheap; confirm runs
+		# once in the calling thread and has the last word
+		self.looks_open = looks_open
+		self.confirm = confirm
+		self.interval = interval
+		self.lead = lead
+		self.deadline = deadline
+		self.timeout = timeout
+		self.attempts = []
+
+	def prewarm(self):
+		"""Open every connection up front so no burst request pays a handshake.
+
+		mechanize has no keep-alive at all and a fresh TLS connection to LPIS
+		costs about as much as two extra round trips, which is the difference
+		between a request that lands in the opening second and one that does
+		not.
+		"""
+		bodies = []
+
+		def warm(session):
+			try:
+				response = session.get(self.url, timeout=self.timeout)
+				bodies.append(response.content)
+				return True
+			except requests.exceptions.RequestException as error:
+				logger.warning("could not pre-warm a connection: %s" % error)
+				return False
+
+		with ThreadPoolExecutor(max_workers=len(self.sessions)) as pool:
+			warmed = sum(1 for ok in pool.map(warm, self.sessions) if ok)
+		logger.info("pre-warmed %s/%s connections" % (warmed, len(self.sessions)))
+
+		# The first BeautifulSoup parse in a process costs about 370ms of
+		# one-off setup, against 7ms for every one after it. Usually something
+		# earlier in the run has already paid that, but leaving a cliff that
+		# size to chance on the one parse that decides the registration is not
+		# worth it - so it gets paid here, on a page nobody is waiting for.
+		if bodies:
+			started = time.perf_counter()
+			try:
+				self.looks_open(bodies[0])
+				if self.confirm is not None:
+					self.confirm(bodies[0])
+			except Exception as error:
+				logger.warning("could not pre-warm the parser: %s" % error)
+			logger.info("pre-warmed the parser in %.0f ms"
+						% ((time.perf_counter() - started) * 1000))
+		return warmed
+
+	def run(self, opens_at):
+		"""Fire the grid and return the first response that shows it open.
+
+		Returns (session, response, body) or None if the deadline passed
+		without the registration ever opening.
+		"""
+		found = threading.Event()
+		candidate = []
+		guard = threading.Lock()
+
+		def shoot(session, planned):
+			# a request that would go out after somebody already won is simply
+			# never sent
+			if found.is_set():
+				return
+			started = time.time()
+			try:
+				response = session.get(self.url, timeout=self.timeout)
+				body = response.content
+			except requests.exceptions.RequestException as error:
+				with guard:
+					self.attempts.append(Attempt(planned - opens_at, started - opens_at,
+												 time.time() - started, error))
+				return
+			elapsed = time.time() - started
+			# Only the cheap test runs in here. Parsing the page inside a
+			# worker holds the GIL against every other worker, and it was
+			# measured putting ~400ms between the winning answer arriving and
+			# the burst noticing it - on a page far smaller than the real one.
+			try:
+				hit = self.looks_open(body)
+			except Exception as error:
+				logger.warning("could not check a burst response: %s" % error)
+				hit = False
+			with guard:
+				# both times are recorded: planned says where the grid wanted
+				# this request, sent says when a worker actually got to it.
+				# The two drifting apart is the warning sign that the pool is
+				# saturated and the grid is no longer being kept.
+				self.attempts.append(Attempt(planned - opens_at, started - opens_at,
+											 elapsed, hit))
+				if hit and not candidate:
+					candidate.append((session, response, body))
+					found.set()
+
+		pool = ThreadPoolExecutor(max_workers=len(self.sessions))
+		# Never start in the past: grid points that are already due carry no
+		# delay, so a start behind the clock would dump the whole lead-in on
+		# the server at once. Happens whenever the registration is open
+		# already, or when getting ready took longer than the lead.
+		planned = max(opens_at - self.lead, time.time())
+		# Give up deadline seconds after it opens - but always allow a full
+		# deadline's worth of tries, so starting late (a slow login, a delayed
+		# cron) still gets a real attempt instead of none at all.
+		last = max(opens_at, planned) + self.deadline
+		index = 0
+		try:
+			while True:
+				while not found.is_set() and planned <= last:
+					delay = planned - time.time()
+					if delay > 0:
+						# the grid is 100ms wide, so ordinary sleep accuracy
+						# is plenty - no need to burn a core spinning for it
+						found.wait(timeout=delay)
+					if found.is_set():
+						break
+					pool.submit(shoot, self.sessions[index % len(self.sessions)], planned)
+					index += 1
+					planned += self.interval
+				# the last shots may still be on their way
+				if not found.is_set():
+					found.wait(timeout=self.timeout)
+				if not candidate:
+					logger.info("burst: %s requests sent, none showed it open" % index)
+					return None
+				hit = candidate[0]
+				if self.confirm is None or self.confirm(hit[2]):
+					logger.info("burst: %s requests sent, %s answered"
+								% (index, len(self.attempts)))
+					return hit
+				# The cheap test can match on something else in the page, so a
+				# candidate it produced is only a lead. Drop it and keep going.
+				logger.info("burst: a response looked open but did not hold up, continuing")
+				with guard:
+					candidate.clear()
+				found.clear()
+				if planned > last:
+					logger.info("burst: %s requests sent, none held up" % index)
+					return None
+		finally:
+			# in-flight requests are plain GETs, so there is nothing to clean
+			# up and nothing worth waiting for
+			pool.shutdown(wait=False)
+
+	def log_attempts(self):
+		"""Log the grid relative to the opening second, for later calibration."""
+		for attempt in sorted(self.attempts, key=lambda a: a.sent):
+			if isinstance(attempt.outcome, Exception):
+				state = "failed: %s" % attempt.outcome
+			else:
+				state = "open" if attempt.outcome else "closed"
+			logger.info("  planned T%+.2fs  sent T%+.2fs  took %6.0f ms  %s"
+						% (attempt.planned, attempt.sent, attempt.elapsed * 1000, state))
 
 
 class WuLpisApi():
@@ -274,6 +455,66 @@ class WuLpisApi():
 		return self.data
 
 
+	def _burst_sessions(self, count):
+		"""Build independent sessions for the burst.
+
+		They cannot all share one session: its connection pool would serialise
+		the requests we are trying to overlap, and its cookie jar is not safe
+		to mutate from several threads at once. Each worker therefore gets its
+		own session, seeded with a copy of the cookies the login produced.
+		"""
+		sessions = []
+		for _ in range(count):
+			session = requests.Session()
+			session.headers.update(self.sso.session.headers)
+			for cookie in self.sso.session.cookies:
+				session.cookies.set_cookie(copy.copy(cookie))
+			adapter = requests.adapters.HTTPAdapter(pool_connections=2, pool_maxsize=2)
+			session.mount("https://", adapter)
+			session.mount("http://", adapter)
+			sessions.append(session)
+		return sessions
+
+	def _hand_to_mechanize(self, response, body, url):
+		"""Make a response fetched with requests the browser's current page."""
+		skip = ("content-encoding", "content-length", "transfer-encoding")
+		headers = [(name, value) for name, value in response.headers.items()
+				   if name.lower() not in skip]
+		self.browser.set_response(mechanize.make_response(
+			body, headers, url, response.status_code, response.reason or "OK",
+		))
+
+	def _submit_current_form(self, session, timeout=15.0):
+		"""Send the selected mechanize form over the session that won the burst.
+
+		Using the winning session keeps the cookies consistent with the page
+		the form came from, and its connection is already open. mechanize
+		still builds the request - hidden fields and all - only the sending is
+		done by requests.
+		"""
+		try:
+			request = self.browser.form.click()
+			target = request.get_full_url()
+			method = request.get_method()
+			data = request.data
+			headers = {name: value for name, value in request.header_items()
+					   if name.lower() != "content-length"}
+		except Exception as error:
+			# nothing has been sent yet, so falling back to mechanize is safe
+			logger.warning("could not prepare the fast submit (%s), using mechanize"
+						   % error)
+			return self.browser.submit().read()
+		# deliberately no fallback past this point: once the request is out we
+		# cannot tell whether the server processed it, and a blind retry could
+		# register twice
+		if method == "POST":
+			response = session.post(target, data=data, headers=headers, timeout=timeout)
+		else:
+			response = session.get(target, headers=headers, timeout=timeout)
+		body = response.content
+		self._hand_to_mechanize(response, body, response.url)
+		return body
+
 	def registration(self):
 
 		self.browser.select_form('ea_stupl')
@@ -292,8 +533,15 @@ class WuLpisApi():
 		response = c.request(timeserver, version=3)
 		logger.info("time difference: %.10f (difference is taken into account)" % response.offset)
 
-		offset = self.args.offset + response.offset	# seconds before start time when the request should be made
-		logger.info("offset: %.2f" % offset)
+		# The burst blankets the opening second from every side, so there is no
+		# single moment left to aim at and --offset has nothing to do anymore.
+		# The clock difference still matters: it says where that second
+		# actually lies on this machine's clock.
+		clock_offset = response.offset
+		if getattr(self.args, "offset_explicit", False):
+			logger.opt(colors=True).info(
+				"<yellow>--offset %.2f is ignored: the burst covers the whole "
+				"window instead of firing at one point</yellow>" % self.args.offset)
 		if self.args.planobject and self.args.course:
 			pp = "S" + self.args.planobject
 			lv = self.args.course
@@ -306,7 +554,6 @@ class WuLpisApi():
 		url = soup.find('table', {"class" : "b3k-data"}).find('a', id=pp).parent.findAll('a', href=True, title="Lehrveranstaltungsanmeldung")[0]["href"]
 		r = self.browser.open(self.URL_scraped + url)
 
-		triggertime = 0
 		soup = BeautifulSoup(r.read(), "html.parser")
 
 		if not soup.find('table', {"class" : "b3k-data"}).find('a', text=lv) or not soup.find('table', {"class" : "b3k-data"}).find('a', text=lv2):
@@ -314,14 +561,41 @@ class WuLpisApi():
 			logger.opt(colors=True).info("<yellow>check if the course is available in lpis</yellow>")
 			return
 
+		lv_url = self.URL_scraped + url
+
+		course = lv.encode()
+
+		def looks_open(body):
+			"""Cheap raw-bytes test, run inside the burst workers.
+
+			It looks for the open marker between our course number and the end
+			of its table row, so another course further down the page being
+			open does not set it off. It may still produce the odd false
+			alarm, which is what confirm_open is for - what it must never do
+			is miss a real one, and it cannot: the marker has to be in that
+			row for the row to be registrable.
+			"""
+			start = body.find(course)
+			if start < 0:
+				return False
+			end = body.find(b'</tr>', start)
+			return body.find(b'possible', start, end if end > 0 else len(body)) >= 0
+
+		def confirm_open(body):
+			"""The authoritative check, run once in the calling thread."""
+			page = BeautifulSoup(body, "html.parser")
+			entry = page.find('table', {"class" : "b3k-data"}).find('a', text=lv)
+			return bool(entry and entry.parent.parent.select('div.box.possible'))
+
 		date = soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('.action .timestamp span')[0].text.strip()
 		if 'ab' in date:
-			triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - offset
+			# where the opening second sits on this machine's clock
+			opens_at = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - clock_offset
 
-			if (time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - time.time()) > 600:
+			if (opens_at - time.time()) > 600:
 				logger.opt(colors=True).info("<yellow>registration starts in more than 10 minutes</yellow>")
 				logger.opt(colors=True).info("<green>waiting until 5 minutes before the registration starts</green>")
-				login_triggertime = time.mktime(datetime.datetime.strptime(date[3:], "%d.%m.%Y %H:%M").timetuple()) - 300
+				login_triggertime = opens_at - 300
 				while time.time() < login_triggertime:
 					remaining_time = login_triggertime - time.time()
 					hours, remainder = divmod(remaining_time, 3600)
@@ -331,37 +605,61 @@ class WuLpisApi():
 				self.login()
 				self.registration()
 				return
+		else:
+			# already open (or no start time given): fire straight away
+			opens_at = time.time()
 
-			if triggertime > time.time():
-				logger.info("waiting until: %s (%ss)" % (time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(triggertime)), triggertime))
-				while time.time() < triggertime:
-					remaining_time = triggertime - time.time()
-					hours, remainder = divmod(remaining_time, 3600)
-					minutes, seconds = divmod(remainder, 60)
-					print("starting in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")				
-				# time.sleep( triggertime - time.time() )
+		poller = BurstPoller(
+			sessions=self._burst_sessions(self.args.burst_workers),
+			url=lv_url,
+			looks_open=looks_open,
+			confirm=confirm_open,
+			interval=self.args.burst_interval,
+			lead=self.args.burst_lead,
+			deadline=self.args.burst_deadline,
+		)
 
-		logger.info("triggertime: %s" % triggertime)
+		# get every connection open while there is still time to spare
+		prewarm_at = opens_at - self.args.burst_lead - 5
+		while time.time() < prewarm_at:
+			remaining_time = prewarm_at - time.time()
+			hours, remainder = divmod(remaining_time, 3600)
+			minutes, seconds = divmod(remainder, 60)
+			print("starting in: {:02d}:{:02d}:{:05.2f}".format(int(hours), int(minutes), seconds), end="\r")
+			time.sleep(0.05)
+		poller.prewarm()
+
+		logger.info("opens at: %s (clock difference %.3fs)"
+					% (time.strftime("%d.%m.%Y %H:%M:%S", time.localtime(opens_at)), clock_offset))
+		logger.opt(colors=True).info(
+			"<green>bursting from T-%.1fs every %.2fs across %s connections</green>"
+			% (self.args.burst_lead, self.args.burst_interval, self.args.burst_workers))
+
+		result = poller.run(opens_at)
+		poller.log_attempts()
+
+		if not result:
+			logger.opt(colors=True).error(
+				"<red>registration did not open within %.0fs after %s</red>"
+				% (self.args.burst_deadline, time.strftime("%H:%M:%S", time.localtime(opens_at))))
+			return
+
+		session, response, body = result
+		# The burst sessions carry copies of the cookies, so anything LPIS set
+		# during the burst only exists on the one that won. Folding it back
+		# keeps the browser's jar - and with it every later request - in step
+		# with the page we are about to submit from.
+		for cookie in session.cookies:
+			self.sso.session.cookies.set_cookie(copy.copy(cookie))
+		# the form handling below runs on the browser, so the page it should
+		# work on has to be handed over
+		self._hand_to_mechanize(response, body, lv_url)
+		soup = BeautifulSoup(body, "html.parser")
+
 		logger.info("final open time start: %s" % datetime.datetime.now())
-		
+
 		# Submit registration until it was successful
 		while True:
-	
-			# Reload page until registration is possible
-			while True:
-				starttime = time.time_ns()
-				logger.opt(colors=True).info("<green>start request %s</green>" % datetime.datetime.now())
-				r = self.browser.open(self.URL_scraped + url)
-				logger.opt(colors=True).info("<green>end request %s</green>" % datetime.datetime.now())
-				logger.info(f"request time {(time.time_ns() - starttime) / 1000000000}s")
-				soup = BeautifulSoup(r.read(), "html.parser")
-				if soup.find('table', {"class" : "b3k-data"}).find('a', text=lv).parent.parent.select('div.box.possible'):
-					# break out of loop to start registration progress
-					break
-				else:
-					logger.opt(colors=True).info("<green>parsing done %s</green>" % datetime.datetime.now())
-				logger.opt(colors=True).info("<yellow>registration is not (yet) possibe, waiting ...</yellow>")
-				logger.opt(colors=True).info("<yellow>reloading page and waiting for form to be submittable</yellow>")
 
 			logger.info("final open time end: %s" % datetime.datetime.now())
 			logger.opt(colors=True).info("<green>registration is possible</green>")
@@ -389,9 +687,9 @@ class WuLpisApi():
 				else:
 					logger.info("skipping form2 (%s)" % form2)
 
-			r = self.browser.submit()
+			body = self._submit_current_form(session)
 
-			soup = BeautifulSoup(r.read(), "html.parser")
+			soup = BeautifulSoup(body, "html.parser")
 
 			alert_content = soup.find('div', {"class" : 'b3k_alert_content'})
 			
@@ -412,7 +710,7 @@ class WuLpisApi():
 							if not form2.startswith("WLDEL"):
 								self.browser.select_form(form2)
 								logger.info("submitting registration form2 (%s)" % form2)
-								r = self.browser.submit()
+								self._submit_current_form(session)
 							else:
 								logger.info("skipping form2 (%s)" % form2)
 						except:

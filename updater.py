@@ -92,6 +92,15 @@ def restart_program():
 
 def check():
     """Checks for updates and applies them if available."""
+    # An update overwrites every file in this directory with the released
+    # tree. That is right for a normal checkout and wrong for a worktree
+    # holding changes that are not on master yet: it would quietly replace
+    # them and restart, so the run continues with code nobody asked for.
+    if os.environ.get("LPIS_SKIP_UPDATE"):
+        logger.opt(colors=True).info(
+            "<yellow>LPIS_SKIP_UPDATE is set - not checking for updates</yellow>")
+        return
+
     remote_version = get_remote_version()
     local_version = get_local_version()
 
