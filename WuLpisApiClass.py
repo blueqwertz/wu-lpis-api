@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import datetime, re, os, time, pickle, sys, copy, threading, collections
+import datetime, re, os, time, pickle, sys, copy, threading, shutil
 from concurrent.futures import ThreadPoolExecutor
 from lxml import html
 from bs4 import BeautifulSoup
@@ -30,7 +30,135 @@ def ask_select(message, choices):
 		return None
 
 
-Attempt = collections.namedtuple("Attempt", "planned sent elapsed outcome")
+class BurstDisplay():
+	"""Live view of the burst, drawn from a thread of its own.
+
+	The workers must not draw. Thirty threads writing to a terminal fight over
+	the GIL and the stdout lock in exactly the second that decides the
+	registration - the same reason the page parsing was taken out of them.
+	They only record what happened; this redraws that at a fixed rate.
+
+	It writes straight to the terminal instead of going through the logger, so
+	no cursor movement ends up in the log file, and it only runs on a real tty.
+	"""
+
+	COLOURS = {
+		"pending": "\033[2;37m",	# not sent yet
+		"inflight": "\033[33m",		# sent, still waiting - orange
+		"closed": "\033[31m",		# answered, registration not open yet
+		"open": "\033[32m",			# answered and open: the winner
+		"stale": "\033[90m",		# landed after somebody had already won
+		"failed": "\033[35m",
+	}
+	RESET = "\033[0m"
+
+	def __init__(self, poller, stream=None, rate=0.1):
+		self.poller = poller
+		self.stream = stream if stream is not None else sys.stdout
+		self.rate = rate
+		self._stop = threading.Event()
+		self._thread = None
+		self._height = 0
+
+	# -- state -------------------------------------------------------- #
+
+	@staticmethod
+	def state_of(shot, someone_won):
+		if isinstance(shot["outcome"], Exception):
+			return "failed"
+		if shot["outcome"] is True:
+			return "open"
+		if shot["outcome"] is False:
+			return "stale" if shot["after_win"] else "closed"
+		if shot["sent"] is None:
+			return "pending"
+		return "stale" if someone_won else "inflight"
+
+	@staticmethod
+	def cell(shot, state):
+		sent = "     --  " if shot["sent"] is None else "T%+.2fs" % shot["sent"]
+		took = "      --" if shot["elapsed"] is None else "%6.0f ms" % (shot["elapsed"] * 1000)
+		if state == "failed":
+			label = "failed"
+		elif shot["outcome"] is None:
+			label = "sent" if shot["sent"] is not None else ""
+		else:
+			label = "open" if shot["outcome"] else "closed"
+		return "burst %02d  plan T%+.2fs  sent %s  %s  %-6s" % (
+			shot["seq"] + 1, shot["planned"], sent, took, label)
+
+	# -- rendering ---------------------------------------------------- #
+
+	def frame(self, width=None):
+		shots, someone_won = self.poller.snapshot()
+		if not shots:
+			return ""
+		if width is None:
+			width = shutil.get_terminal_size((100, 24)).columns
+		cells = []
+		for shot in shots:
+			state = self.state_of(shot, someone_won)
+			cells.append(self.COLOURS.get(state, "") + self.cell(shot, state) + self.RESET)
+		plain = self.cell(shots[0], "closed")
+		columns = max(1, min(len(cells), width // (len(plain) + 2)))
+		rows = -(-len(cells) // columns)
+		# filled column by column, so reading straight down follows the grid
+		lines = []
+		for row in range(rows):
+			parts = []
+			for column in range(columns):
+				index = column * rows + row
+				if index < len(cells):
+					parts.append(cells[index])
+			lines.append("  ".join(parts))
+		answered = sum(1 for shot in shots if shot["outcome"] is not None)
+		lines.insert(0, "burst: %d sent, %d answered%s"
+					 % (len(shots), answered, "" if not someone_won else ", winner found"))
+		return "\n".join(lines)
+
+	def draw(self):
+		text = self.frame()
+		if not text:
+			return
+		lines = text.split("\n")
+		out = []
+		if self._height:
+			out.append("\033[%dA" % self._height)
+		for line in lines:
+			out.append("\033[2K" + line + "\n")
+		self._height = len(lines)
+		self.stream.write("".join(out))
+		self.stream.flush()
+
+	# -- lifecycle ---------------------------------------------------- #
+
+	def _loop(self):
+		while not self._stop.wait(self.rate):
+			try:
+				self.draw()
+			except Exception:
+				# a broken display must never take the burst down with it
+				return
+
+	def start(self):
+		try:
+			self.stream.write("\033[?25l")	# hide the cursor while redrawing
+			self.stream.flush()
+		except Exception:
+			return
+		self._thread = threading.Thread(target=self._loop, daemon=True)
+		self._thread.start()
+
+	def stop(self):
+		self._stop.set()
+		if self._thread is not None:
+			self._thread.join(timeout=1.0)
+		try:
+			self.draw()					# one last frame with the final states
+			self.stream.write("\033[?25h")
+			self.stream.flush()
+		except Exception:
+			pass
 
 
 class BurstPoller():
@@ -52,7 +180,7 @@ class BurstPoller():
 	"""
 
 	def __init__(self, sessions, url, looks_open, confirm=None, interval=0.1,
-				 lead=3.0, deadline=10.0, timeout=5.0):
+				 lead=3.0, deadline=10.0, timeout=5.0, live=False):
 		self.sessions = sessions
 		self.url = url
 		# looks_open runs inside the workers and must stay cheap; confirm runs
@@ -63,7 +191,19 @@ class BurstPoller():
 		self.lead = lead
 		self.deadline = deadline
 		self.timeout = timeout
-		self.attempts = []
+		self.live = live
+		# seq -> what we know about that shot so far; written twice, once when
+		# a worker actually sends it and once when the answer comes back
+		self.shots = {}
+		self._won = False
+		self._guard = threading.Lock()
+
+	def snapshot(self):
+		"""A copy of the grid state, safe to read while the burst is running."""
+		with self._guard:
+			shots = [dict(shot) for shot in
+					 sorted(self.shots.values(), key=lambda shot: shot["seq"])]
+			return shots, self._won
 
 	def prewarm(self):
 		"""Open every connection up front so no burst request pays a handshake.
@@ -113,21 +253,25 @@ class BurstPoller():
 		"""
 		found = threading.Event()
 		candidate = []
-		guard = threading.Lock()
+		guard = self._guard
 
-		def shoot(session, planned):
+		def shoot(seq, session, planned):
 			# a request that would go out after somebody already won is simply
 			# never sent
 			if found.is_set():
 				return
 			started = time.time()
+			with guard:
+				self.shots[seq]["sent"] = started - opens_at
 			try:
 				response = session.get(self.url, timeout=self.timeout)
 				body = response.content
 			except requests.exceptions.RequestException as error:
 				with guard:
-					self.attempts.append(Attempt(planned - opens_at, started - opens_at,
-												 time.time() - started, error))
+					shot = self.shots[seq]
+					shot["elapsed"] = time.time() - started
+					shot["outcome"] = error
+					shot["after_win"] = bool(candidate)
 				return
 			elapsed = time.time() - started
 			# Only the cheap test runs in here. Parsing the page inside a
@@ -140,16 +284,18 @@ class BurstPoller():
 				logger.warning("could not check a burst response: %s" % error)
 				hit = False
 			with guard:
-				# both times are recorded: planned says where the grid wanted
-				# this request, sent says when a worker actually got to it.
-				# The two drifting apart is the warning sign that the pool is
-				# saturated and the grid is no longer being kept.
-				self.attempts.append(Attempt(planned - opens_at, started - opens_at,
-											 elapsed, hit))
+				shot = self.shots[seq]
+				shot["elapsed"] = elapsed
+				shot["outcome"] = hit
+				# whether somebody else was already there decides how this
+				# shot reads: a late "closed" says nothing about the timing
+				shot["after_win"] = bool(candidate)
 				if hit and not candidate:
 					candidate.append((session, response, body))
+					self._won = True
 					found.set()
 
+		display = BurstDisplay(self) if self.live else None
 		pool = ThreadPoolExecutor(max_workers=len(self.sessions))
 		# Never start in the past: grid points that are already due carry no
 		# delay, so a start behind the clock would dump the whole lead-in on
@@ -161,6 +307,8 @@ class BurstPoller():
 		# cron) still gets a real attempt instead of none at all.
 		last = max(opens_at, planned) + self.deadline
 		index = 0
+		if display is not None:
+			display.start()
 		try:
 			while True:
 				while not found.is_set() and planned <= last:
@@ -171,7 +319,11 @@ class BurstPoller():
 						found.wait(timeout=delay)
 					if found.is_set():
 						break
-					pool.submit(shoot, self.sessions[index % len(self.sessions)], planned)
+					with guard:
+						self.shots[index] = {"seq": index, "planned": planned - opens_at,
+											 "sent": None, "elapsed": None,
+											 "outcome": None, "after_win": False}
+					pool.submit(shoot, index, self.sessions[index % len(self.sessions)], planned)
 					index += 1
 					planned += self.interval
 				# the last shots may still be on their way
@@ -182,32 +334,59 @@ class BurstPoller():
 					return None
 				hit = candidate[0]
 				if self.confirm is None or self.confirm(hit[2]):
-					logger.info("burst: %s requests sent, %s answered"
-								% (index, len(self.attempts)))
+					logger.info("burst: %s requests sent, won on shot %s"
+								% (index, self._winning_seq()))
 					return hit
 				# The cheap test can match on something else in the page, so a
 				# candidate it produced is only a lead. Drop it and keep going.
 				logger.info("burst: a response looked open but did not hold up, continuing")
 				with guard:
 					candidate.clear()
+					self._won = False
 				found.clear()
 				if planned > last:
 					logger.info("burst: %s requests sent, none held up" % index)
 					return None
 		finally:
+			if display is not None:
+				display.stop()
 			# in-flight requests are plain GETs, so there is nothing to clean
 			# up and nothing worth waiting for
 			pool.shutdown(wait=False)
 
+	def _winning_seq(self):
+		with self._guard:
+			for shot in sorted(self.shots.values(), key=lambda shot: shot["seq"]):
+				if shot["outcome"] is True:
+					return shot["seq"] + 1
+		return None
+
 	def log_attempts(self):
-		"""Log the grid relative to the opening second, for later calibration."""
-		for attempt in sorted(self.attempts, key=lambda a: a.sent):
-			if isinstance(attempt.outcome, Exception):
-				state = "failed: %s" % attempt.outcome
+		"""Log the whole grid relative to the opening second, after the fact.
+
+		This goes through the logger, so it is what ends up in the log file and
+		what a run without a terminal shows. Requests that were still in flight
+		when somebody won are listed too - they were abandoned on purpose, and
+		leaving them out would make it look like the grid had holes in it.
+		"""
+		shots, someone_won = self.snapshot()
+		for shot in shots:
+			state = BurstDisplay.state_of(shot, someone_won)
+			if state == "pending":
+				logger.info("  burst %02d  plan T%+.2fs  never sent" % (shot["seq"] + 1, shot["planned"]))
+			elif shot["outcome"] is None:
+				logger.info("  burst %02d  plan T%+.2fs  sent T%+.2fs  still in flight when it was won, dropped"
+							% (shot["seq"] + 1, shot["planned"], shot["sent"]))
+			elif isinstance(shot["outcome"], Exception):
+				logger.info("  burst %02d  plan T%+.2fs  sent T%+.2fs  took %6.0f ms  failed: %s"
+							% (shot["seq"] + 1, shot["planned"], shot["sent"],
+							   shot["elapsed"] * 1000, shot["outcome"]))
 			else:
-				state = "open" if attempt.outcome else "closed"
-			logger.info("  planned T%+.2fs  sent T%+.2fs  took %6.0f ms  %s"
-						% (attempt.planned, attempt.sent, attempt.elapsed * 1000, state))
+				logger.info("  burst %02d  plan T%+.2fs  sent T%+.2fs  took %6.0f ms  %s"
+							% (shot["seq"] + 1, shot["planned"], shot["sent"],
+							   shot["elapsed"] * 1000,
+							   "open" if shot["outcome"] else
+							   ("closed (after the win)" if shot["after_win"] else "closed")))
 
 
 class WuLpisApi():
@@ -617,6 +796,10 @@ class WuLpisApi():
 			interval=self.args.burst_interval,
 			lead=self.args.burst_lead,
 			deadline=self.args.burst_deadline,
+			# the live grid is cursor movement and colour, which only makes
+			# sense on a terminal - under cron or a pipe the log block below
+			# is the whole story
+			live=sys.stdout.isatty(),
 		)
 
 		# Get every connection open while there is still time to spare. The
