@@ -619,8 +619,11 @@ class WuLpisApi():
 			deadline=self.args.burst_deadline,
 		)
 
-		# get every connection open while there is still time to spare
-		prewarm_at = opens_at - self.args.burst_lead - 5
+		# Get every connection open while there is still time to spare. The
+		# head start is generous on purpose: a pre-warm that runs into its own
+		# timeout leaves connections cold, and those then pay the handshake
+		# during the burst - which is the one moment it must not be paid.
+		prewarm_at = opens_at - self.args.burst_lead - 15
 		while time.time() < prewarm_at:
 			remaining_time = prewarm_at - time.time()
 			hours, remainder = divmod(remaining_time, 3600)
