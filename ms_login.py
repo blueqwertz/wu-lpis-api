@@ -99,6 +99,8 @@ OTP_METHODS = ("PhoneAppOTP", "OneWaySMS", "ConsolidatedTelephony")
 
 MAX_STEPS = 25
 POLL_INTERVAL = 1.0
+LOGIN_REQUEST_TIMEOUT = 60
+LOGIN_ATTEMPTS = 5
 
 # What Microsoft reports when an approval did not simply succeed. Without this
 # the user only saw the raw result value, e.g. "PhoneAppDenied".
@@ -393,18 +395,29 @@ class LpisSSOSession():
         had_session = self.load_session()
         self.used_stored_session = had_session
 
-        try:
-            response = self._run()
-        except MicrosoftLoginDenied:
-            # retrying would just send a second prompt to the same phone
-            raise
-        except MicrosoftLoginError:
-            if not had_session:
+        for attempt in range(1, LOGIN_ATTEMPTS + 1):
+            try:
+                response = self._run()
+                break
+            except MicrosoftLoginDenied:
+                # retrying would just send a second prompt to the same phone
                 raise
-            logger.warning("stored session unusable, starting a fresh login")
-            self.clear_session()
-            self.used_stored_session = False
-            response = self._run()
+            except (MicrosoftLoginError, requests.RequestException) as error:
+                if attempt == LOGIN_ATTEMPTS:
+                    if isinstance(error, MicrosoftLoginError):
+                        raise
+                    raise MicrosoftLoginError(
+                        "login failed after %d attempts: %s"
+                        % (LOGIN_ATTEMPTS, error)) from error
+
+                if had_session and attempt == 1:
+                    logger.warning("stored session unusable, starting a fresh login")
+                else:
+                    logger.warning(
+                        "login attempt %d/%d failed (%s), retrying"
+                        % (attempt, LOGIN_ATTEMPTS, error))
+                self.clear_session()
+                self.used_stored_session = False
 
         self.save_session()
         return response
@@ -416,7 +429,8 @@ class LpisSSOSession():
     def _run(self):
         self.idp_hint_attempted = False
         self.keycloak_forms_submitted = 0
-        response = self.session.get(START_URL, timeout=30)
+        self.did_interactive_login = False
+        response = self.session.get(START_URL, timeout=LOGIN_REQUEST_TIMEOUT)
 
         for _ in range(MAX_STEPS):
             host = urlparse(response.url).netloc.lower()
@@ -452,8 +466,8 @@ class LpisSSOSession():
                 data[name] = field.get("value", "")
         method = (form.get("method") or "post").lower()
         if method == "get":
-            return self.session.get(action, params=data, timeout=30)
-        return self.session.post(action, data=data, timeout=30)
+            return self.session.get(action, params=data, timeout=LOGIN_REQUEST_TIMEOUT)
+        return self.session.post(action, data=data, timeout=LOGIN_REQUEST_TIMEOUT)
 
     # ------------------------------------------------------------------ #
     # Keycloak
@@ -476,7 +490,7 @@ class LpisSSOSession():
         target = self._keycloak_redirect_target(response)
         if target is None:
             raise MicrosoftLoginError(_keycloak_diagnostics(response))
-        return self.session.get(target, timeout=30)
+        return self.session.get(target, timeout=LOGIN_REQUEST_TIMEOUT)
 
     def _authorization_url(self, response):
         """The OIDC authorization url this response came from, if any."""
@@ -514,7 +528,7 @@ class LpisSSOSession():
 
         logger.info("Keycloak login page, retrying the authorization request "
                     "with %s=%s" % (IDP_HINT_PARAM, IDP_HINT_VALUE))
-        return self.session.get(target, timeout=30)
+        return self.session.get(target, timeout=LOGIN_REQUEST_TIMEOUT)
 
     def _submit_keycloak_form(self, response):
         """Send Keycloak's self-posting interstitial onwards.
@@ -549,8 +563,8 @@ class LpisSSOSession():
         logger.info("Keycloak Kerberos step - continuing with the alternative login")
 
         if (form.get("method") or "post").lower() == "get":
-            return self.session.get(action, params=data, timeout=30)
-        return self.session.post(action, data=data, timeout=30)
+            return self.session.get(action, params=data, timeout=LOGIN_REQUEST_TIMEOUT)
+        return self.session.post(action, data=data, timeout=LOGIN_REQUEST_TIMEOUT)
 
     def _keycloak_redirect_target(self, response):
         """First redirect on the page that is safe to follow, or None."""
@@ -606,10 +620,10 @@ class LpisSSOSession():
             post_params = config.get("oPostParams")
             if post_params:
                 return self.session.post(
-                    target, data=_unescape_post_params(post_params), timeout=30,
+                    target, data=_unescape_post_params(post_params), timeout=LOGIN_REQUEST_TIMEOUT,
                     headers={"Referer": response.url,
                              "Origin": "https://login.microsoftonline.com"})
-            return self.session.get(target, timeout=30)
+            return self.session.get(target, timeout=LOGIN_REQUEST_TIMEOUT)
 
         if page == "ConvergedSignIn":
             return self._do_password(response, config)
@@ -665,7 +679,7 @@ class LpisSSOSession():
                 "flowToken": flow_token,
             }
             result = self.session.post(
-                credential_type_url, json=payload, timeout=30,
+                credential_type_url, json=payload, timeout=LOGIN_REQUEST_TIMEOUT,
                 headers=self._api_headers(config, response.url))
             try:
                 body = result.json()
@@ -705,7 +719,7 @@ class LpisSSOSession():
             "DfpArtifact": "",
         }
         return self.session.post(
-            urljoin(response.url, config["urlPost"]), data=data, timeout=30,
+            urljoin(response.url, config["urlPost"]), data=data, timeout=LOGIN_REQUEST_TIMEOUT,
             headers={"Referer": response.url,
                      "Origin": "https://login.microsoftonline.com"})
 
@@ -742,7 +756,7 @@ class LpisSSOSession():
         logger.info("2FA method: %s (%s)" % (method_id, proof.get("display", "")))
 
         begin = self.session.post(
-            config["urlBeginAuth"], timeout=30,
+            config["urlBeginAuth"], timeout=LOGIN_REQUEST_TIMEOUT,
             headers=self._api_headers(config, response.url),
             json={
                 "AuthMethodId": method_id,
@@ -767,7 +781,7 @@ class LpisSSOSession():
         if method_id in OTP_METHODS:
             code = _prompt("2FA-Code eingeben:")
             end = self.session.post(
-                config["urlEndAuth"], timeout=30,
+                config["urlEndAuth"], timeout=LOGIN_REQUEST_TIMEOUT,
                 headers=self._api_headers(config, response.url, ctx, flow_token, session_id),
                 json={
                     "Method": "EndAuth",
@@ -811,7 +825,7 @@ class LpisSSOSession():
             "canary": config.get("canary", ""),
         }
         return self.session.post(
-            urljoin(response.url, config["urlPost"]), data=data, timeout=30,
+            urljoin(response.url, config["urlPost"]), data=data, timeout=LOGIN_REQUEST_TIMEOUT,
             headers={"Referer": response.url,
                      "Origin": "https://login.microsoftonline.com"})
 
@@ -830,7 +844,7 @@ class LpisSSOSession():
 
             last_start = int(time.time() * 1000)
             poll = self.session.get(
-                config["urlEndAuth"], params=params, timeout=30,
+                config["urlEndAuth"], params=params, timeout=LOGIN_REQUEST_TIMEOUT,
                 headers=self._api_headers(config, response.url, ctx, flow_token, session_id))
             last_end = int(time.time() * 1000)
 
@@ -862,6 +876,6 @@ class LpisSSOSession():
             "canary": config.get("canary", ""),
         }
         return self.session.post(
-            urljoin(response.url, config["urlPost"]), data=data, timeout=30,
+            urljoin(response.url, config["urlPost"]), data=data, timeout=LOGIN_REQUEST_TIMEOUT,
             headers={"Referer": response.url,
                      "Origin": "https://login.microsoftonline.com"})
