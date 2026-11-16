@@ -284,15 +284,23 @@ class WuLpisApi():
 		logger.info("sectionpoint: %s" % item.name)
 		item.selected = True
 		
-		timeserver = "timeserver.wu.ac.at"
-		logger.info("syncing time with %s" % timeserver)
-
-		# # timeserver sync
+		# timeserver sync: try several servers, never abort the registration
+		# just because NTP (UDP port 123) is blocked or a server is down
+		ntp_offset = 0.0
 		c = ntplib.NTPClient()
-		response = c.request(timeserver, version=3)
-		logger.info("time difference: %.10f (difference is taken into account)" % response.offset)
+		for timeserver in ("timeserver.wu.ac.at", "time.apple.com", "pool.ntp.org", "time.google.com"):
+			logger.info("syncing time with %s" % timeserver)
+			try:
+				response = c.request(timeserver, version=3, timeout=3)
+				ntp_offset = response.offset
+				logger.info("time difference: %.10f (difference is taken into account)" % ntp_offset)
+				break
+			except Exception as e:
+				logger.opt(colors=True).warning("<yellow>%s not reachable (%s)</yellow>" % (timeserver, e))
+		else:
+			logger.opt(colors=True).warning("<yellow>no timeserver reachable, using local system clock (offset 0)</yellow>")
 
-		offset = self.args.offset + response.offset	# seconds before start time when the request should be made
+		offset = self.args.offset + ntp_offset	# seconds before start time when the request should be made
 		logger.info("offset: %.2f" % offset)
 		if self.args.planobject and self.args.course:
 			pp = "S" + self.args.planobject
